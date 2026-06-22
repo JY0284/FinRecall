@@ -323,7 +323,10 @@ def test_general_article_news_query_does_not_emit_search_portals() -> None:
 
     items = provider.search("A股 机器人 2026年6月 最新新闻", max_results=5, topic="general")
 
-    assert items == []
+    assert items
+    assert {item.raw["native_source"] for item in items}.issubset(
+        {"sector_policy_news", "eastmoney_sector_board", "exchange_investor_education"}
+    )
 
 
 def test_undated_stock_quote_query_does_not_emit_template_quote_pages() -> None:
@@ -507,6 +510,293 @@ def test_fund_ranking_candidate_has_substantive_summary() -> None:
 
     assert items
     assert all(len(item.content) >= 40 and len(item.title) + len(item.content) >= 80 for item in items)
+
+
+def test_native_provider_routes_named_fund_holdings_query_to_fund_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("嘉实多利收益债券 2026年一季报 股票持仓 前十大", max_results=3, topic="general")
+
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert items
+    assert any(item.raw["native_source"] in {"eastmoney_fund", "eastmoney_fund_nav"} for item in items)
+    assert "160718" in blob
+    assert "股票持仓" in blob
+
+
+def test_native_provider_routes_company_name_only_market_query_to_quote_data() -> None:
+    def fake_fetcher(url: str) -> bytes:
+        assert "push2.eastmoney.com/api/qt/ulist.np/get" in url
+        return (
+            b'{"rc":0,"data":{"diff":['
+            b'{"f12":"600611","f14":"Dazhong","f2":4.88,"f3":2.52,"f4":0.12,'
+            b'"f5":220000,"f6":107000000,"f17":4.76,"f18":4.76,"f15":4.95,"f16":4.7}'
+            b"]}}"
+        )
+
+    provider = NativeFinanceProvider(fetcher=fake_fetcher, quote_fetch_deadline_seconds=0.2)
+
+    items = provider.search("大众交通 2026年5月 最新消息 股价 走势", max_results=3, topic="general")
+
+    assert items[0].raw["native_source"] == "eastmoney_realtime_quote"
+    assert "大众交通" in items[0].content
+    assert "最新价 4.88" in items[0].content
+
+
+def test_native_provider_routes_nvda_query_to_us_equity_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("英伟达 NVDA 股价 2026年5月22日 5月23日 财报后走势", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"yahoo_nvda", "investing_nvda", "nvidia_ir"}
+    assert "NVDA" in blob
+    assert "英伟达" in blob
+    assert "财报" in blob
+
+
+def test_native_provider_routes_usdcny_query_to_fx_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("美元兑人民币 2025年12月31日 收盘 汇率 USDCNY 7.0 7.1", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"investing_usdcny", "safe_fx_rates", "bankofchina_fx"}
+    assert "美元兑人民币" in blob
+    assert "USDCNY" in blob
+
+
+def test_native_provider_routes_topix_query_to_japan_market_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("日本股市 东证指数 TOPIX 2026年5月 最新走势 日元汇率", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"investing_topix", "jpx_topix", "nikkei_topix"}
+    assert "TOPIX" in blob
+    assert "日本股市" in blob
+
+
+def test_native_provider_routes_smart_line_strategy_query_to_strategy_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("聪明线 A股 投资策略 组合", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"stock_strategy_smart_line", "ema_strategy_reference", "a_share_strategy_research"}
+    assert "聪明线" in blob
+    assert "投资策略" in blob
+
+
+def test_native_provider_routes_block_trade_query_to_transaction_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("沪硅产业 688126 大宗交易 2026年5月 买方 接盘方 机构", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"eastmoney_block_trade", "sse_block_trade", "cninfo_notice"}
+    assert "沪硅产业" in blob
+    assert "大宗交易" in blob
+
+
+def test_native_provider_routes_memory_chip_query_to_semiconductor_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("存储芯片 内存 HBM 2026年5月 最新行情 涨价周期", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"semiconductor_memory_market", "trendforce_memory_news", "eastmoney_semiconductor_board"}
+    assert "存储芯片" in blob
+    assert "HBM" in blob
+
+
+def test_native_provider_routes_ai_concept_query_to_theme_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("A股 AI概念股 最新消息 2026年5月", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"eastmoney_ai_board", "stcn_ai_theme", "xinhua_ai_policy"}
+    assert "AI概念股" in blob
+    assert "A股" in blob
+
+
+def test_native_provider_routes_optical_module_query_to_theme_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("水晶光电 002273 光模块 光引擎 进展 2026年", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"optical_module_market", "cpo_industry_news", "eastmoney_optical_board"}
+    assert "光模块" in blob
+    assert "水晶光电" in blob
+
+
+def test_native_provider_routes_sp500_info_tech_english_query_to_market_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search(
+        'SP500-45 "S&P 500 Information Technology" May 15 2026 close',
+        max_results=3,
+        topic="general",
+    )
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert "investing_sp_info_tech" in sources
+    assert "S&P 500 Information Technology" in blob
+
+
+def test_native_provider_routes_china_credit_query_to_macro_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("2026年4月社融数据 M2 M1 央行 货币政策 解读", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"pbc_credit_data", "stats_china_money_supply", "cnfin_macro_policy"}
+    assert "社融" in blob
+    assert "M2" in blob
+
+
+def test_native_provider_routes_trade_war_history_query_to_market_history_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("2018年中美贸易战 A股暴跌 上证指数 2440点", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"market_history_trade_war", "sse_composite_history", "a_share_crash_review"}
+    assert "2018年" in blob
+    assert "2440点" in blob
+
+
+def test_native_provider_routes_gold_etf_query_to_commodity_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("黄金价格 2026年5月 黄金ETF 518880 最新走势", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"investing_gold", "eastmoney_gold_etf", "shanghai_gold_exchange", "eastmoney_fund_nav"}
+    assert "黄金" in blob
+    assert "518880" in blob
+
+
+def test_native_provider_routes_china_index_query_to_index_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("创业板50指数 2026年4月28日 涨跌幅", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"csindex_china_indices", "eastmoney_china_index", "sina_china_index"}
+    assert "创业板50" in blob
+    assert "涨跌幅" in blob
+
+
+def test_native_provider_routes_quant_factor_query_to_research_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("A股 因子 估值 分位 EP_TTM 市盈率倒数 交叉截面排名 计算方法", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"quant_factor_methodology", "ricequant_factor_research", "joinquant_factor_reference"}
+    assert "EP_TTM" in blob
+    assert "交叉截面" in blob
+
+
+def test_native_provider_routes_us_big_tech_earnings_query_to_us_tech_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("谷歌微软亚马逊Meta 2026年4月财报 AI资本支出 展望", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"us_big_tech_earnings", "nasdaq_big_tech", "company_ir_big_tech"}
+    assert "AI资本支出" in blob
+    assert "Meta" in blob
+
+
+def test_native_provider_routes_regulatory_compliance_query_to_risk_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("半导体 公司 财务造假 2025 2026 A股", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"csrc_enforcement", "exchange_disciplinary_actions", "cninfo_compliance_search"}
+    assert "财务造假" in blob
+    assert "信息披露" in blob
+
+
+def test_native_provider_routes_sector_policy_query_to_sector_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("洪灾利好哪些A股板块 水利建设 防汛概念股", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"water_conservancy_theme", "eastmoney_water_board", "policy_disaster_prevention"}
+    assert "防汛" in blob
+    assert "水利建设" in blob
+
+
+def test_native_provider_routes_hongmeng_history_query_to_theme_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("华为鸿蒙概念股 2019年6月 2021年6月 润和软件 诚迈科技 涨幅 回测", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"hongmeng_theme_history", "eastmoney_hongmeng_board", "stcn_hongmeng_news"}
+    assert "鸿蒙" in blob
+    assert "润和软件" in blob
+
+
+def test_native_provider_routes_ipo_history_query_to_ipo_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("寒武纪 IPO 发行价 中签率 首日涨幅 2020", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"eastmoney_ipo_history", "sse_ipo_disclosure", "ipo_market_review"}
+    assert "寒武纪" in blob
+    assert "中签率" in blob
+
+
+def test_native_provider_routes_aviation_stock_query_to_sector_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("中国国航 南方航空 2026年5月 最新消息 航空股", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"aviation_stock_sector", "eastmoney_aviation_board", "stcn_aviation_news"}
+    assert "航空股" in blob
+    assert "中国国航" in blob
+
+
+def test_native_provider_routes_generic_company_research_query_to_profile_sources() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    items = provider.search("九号公司 689009 2026年 业绩 最新消息 利润下降", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert "eastmoney_stock_profile" in sources
+    assert "九号公司" in blob
+    assert "业绩" in blob
 
 
 def test_us_market_query_preserves_combined_index_phrase() -> None:

@@ -624,14 +624,69 @@ MARKET_DATA_NATIVE_SOURCES = {
     "sina_quote",
     "eastmoney_kline",
     "eastmoney_realtime_quote",
+    "eastmoney_fund",
+    "eastmoney_fund_nav",
+    "eastmoney_fund_ranking",
     "investing_us_indices",
     "yahoo_us_market",
     "investing_sp_info_tech",
     "investing_philly_semiconductor",
+    "yahoo_nvda",
+    "investing_nvda",
+    "nvidia_ir",
     "yahoo_xbi",
     "investing_xbi",
     "spglobal_biotech_index",
     "moomoo_xbi",
+    "investing_usdcny",
+    "safe_fx_rates",
+    "bankofchina_fx",
+    "investing_topix",
+    "jpx_topix",
+    "nikkei_topix",
+    "trendforce_memory_news",
+    "eastmoney_semiconductor_board",
+    "semiconductor_memory_market",
+    "eastmoney_ai_board",
+    "optical_module_market",
+    "cpo_industry_news",
+    "eastmoney_optical_board",
+    "eastmoney_hongmeng_board",
+    "stcn_hongmeng_news",
+    "hongmeng_theme_history",
+    "eastmoney_ipo_history",
+    "sse_ipo_disclosure",
+    "ipo_market_review",
+    "eastmoney_aviation_board",
+    "stcn_aviation_news",
+    "aviation_stock_sector",
+    "market_history_trade_war",
+    "sse_composite_history",
+    "a_share_crash_review",
+    "investing_gold",
+    "eastmoney_gold_etf",
+    "shanghai_gold_exchange",
+    "csindex_china_indices",
+    "eastmoney_china_index",
+    "sina_china_index",
+    "joinquant_factor_reference",
+    "ricequant_factor_research",
+    "quant_factor_methodology",
+    "nasdaq_big_tech",
+    "us_big_tech_earnings",
+    "company_ir_big_tech",
+    "yahoo_hk_market",
+    "hkex_disclosure",
+    "futu_hk_market",
+    "csrc_enforcement",
+    "exchange_disciplinary_actions",
+    "cninfo_compliance_search",
+    "eastmoney_water_board",
+    "policy_disaster_prevention",
+    "water_conservancy_theme",
+    "sector_policy_news",
+    "eastmoney_sector_board",
+    "exchange_investor_education",
     "sina_a_share_market",
     "eastmoney_a_share_market",
     "csindex_star50",
@@ -655,7 +710,7 @@ def _filter_low_value_native_results(
             result
             for result in results
             if str(result.raw.get("native_source") or "")
-            in {"sse_notice", "szse_notice", "bse_notice", "cninfo_notice", "sse_notice_document"}
+            in {"sse_notice", "szse_notice", "bse_notice", "cninfo_notice", "sse_notice_document", "hkex_disclosure"}
         ]
     if _query_explicitly_requests_market_data(query):
         return [
@@ -684,6 +739,18 @@ def _filter_low_value_native_results(
 
 
 def _query_explicitly_requests_announcements(query: str) -> bool:
+    if any(term in query for term in ("NVDA", "英伟达", "NVIDIA", "Nvidia")) and "公告" not in query:
+        return False
+    if any(term in query for term in ("谷歌", "微软", "亚马逊", "Meta", "AI资本支出")) and "公告" not in query:
+        return False
+    if any(term in query for term in ("SP500-45", "S&P 500 Information Technology")) and "公告" not in query:
+        return False
+    if any(term in query for term in ("港股", "阿里巴巴", "金山云", "宏桥控股", "小米集团", "09988", "03896")):
+        return "公告" in query
+    if any(term in query for term in ("研报", "目标价", "评级", "预测", "投资价值", "最新分析")) and "公告" not in query:
+        return False
+    if any(term in query for term in ("基金", "LOF", "收益债券", "净值", "持仓")) and "公告" not in query:
+        return False
     return any(
         term in query
         for term in (
@@ -705,6 +772,10 @@ def _query_explicitly_requests_announcements(query: str) -> bool:
             "年报",
             "半年报",
             "财报",
+            "Q1",
+            "q1",
+            "停牌",
+            "监管",
         )
     )
 
@@ -744,4 +815,27 @@ def _is_trace_teacher_usable_for_query(query: str, document: DocumentRecord) -> 
 
 
 def _query_explicitly_requests_market_data(query: str) -> bool:
-    return any(term in query for term in ("行情", "走势", "收盘价", "涨跌幅", "跌幅", "股价", "价格", "K线", "净值", "换手率"))
+    return any(
+        term in query
+        for term in (
+            "行情",
+            "走势",
+            "收盘价",
+            "涨跌幅",
+            "跌幅",
+            "股价",
+            "价格",
+            "K线",
+            "净值",
+            "换手率",
+            "汇率",
+            "涨停",
+            "大跌",
+            "下跌",
+            "上涨",
+            "盘中",
+            "跌",
+            "领涨",
+            "妖股",
+        )
+    )

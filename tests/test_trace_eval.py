@@ -129,7 +129,7 @@ def test_compare_trace_teacher_results_reports_low_quality_native_gaps(tmp_path)
     report = compare_trace_teacher_results(client, max_cases=1, max_results=4)
 
     assert report["summary"]["query_count"] == 1
-    assert report["summary"]["portal_result_count"] == 2
+    assert report["summary"]["portal_result_count"] == 1
     assert report["summary"]["thin_result_count"] == 4
     assert report["summary"]["duplicate_domain_count"] == 1
     assert report["cases"][0]["query"] == query

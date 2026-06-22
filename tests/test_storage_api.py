@@ -427,6 +427,130 @@ def test_search_web_keeps_native_biotech_market_data_for_market_queries(tmp_path
     assert outcome.results[0].raw["native_source"] in {"yahoo_xbi", "investing_xbi", "spglobal_biotech_index"}
 
 
+def test_search_web_keeps_native_fund_data_for_named_fund_queries(tmp_path) -> None:
+    client = FinRecallClient(
+        db_path=tmp_path / "research.sqlite",
+        provider=NativeFinanceProvider(),
+    )
+
+    outcome = client.search_web(
+        "嘉实多利收益债券 净值 2026年6月2日",
+        max_results=3,
+        force_refresh=True,
+    )
+
+    assert outcome.error is None
+    assert outcome.results
+    assert outcome.results[0].raw["native_source"] in {
+        "eastmoney_fund",
+        "eastmoney_fund_nav",
+        "eastmoney_fund_ranking",
+    }
+
+
+def test_search_web_keeps_native_fund_data_for_quarterly_holdings_queries(tmp_path) -> None:
+    client = FinRecallClient(
+        db_path=tmp_path / "research.sqlite",
+        provider=NativeFinanceProvider(),
+    )
+
+    outcome = client.search_web(
+        "嘉实多利收益债券 160718 2026年一季报 股票持仓 前十大",
+        max_results=3,
+        force_refresh=True,
+    )
+
+    assert outcome.error is None
+    assert outcome.results
+    sources = {item.raw["native_source"] for item in outcome.results}
+    assert sources <= {"eastmoney_fund", "eastmoney_fund_nav", "eastmoney_fund_ranking"}
+
+
+def test_search_web_keeps_native_us_equity_data_for_market_queries(tmp_path) -> None:
+    client = FinRecallClient(
+        db_path=tmp_path / "research.sqlite",
+        provider=NativeFinanceProvider(),
+    )
+
+    outcome = client.search_web(
+        "英伟达 NVDA 股价 2026年5月22日 5月23日 财报后走势",
+        max_results=3,
+        force_refresh=True,
+    )
+
+    assert outcome.error is None
+    assert outcome.results
+    assert outcome.results[0].raw["native_source"] in {"yahoo_nvda", "investing_nvda", "nvidia_ir"}
+
+
+def test_search_web_keeps_native_sp500_info_tech_data_for_quarterly_return_queries(tmp_path) -> None:
+    client = FinRecallClient(
+        db_path=tmp_path / "research.sqlite",
+        provider=NativeFinanceProvider(),
+    )
+
+    outcome = client.search_web(
+        "S&P 500 Information Technology SP500-45 2026 Q1 回报 收益率 3月31日",
+        max_results=3,
+        force_refresh=True,
+    )
+
+    assert outcome.error is None
+    assert outcome.results
+    assert outcome.results[0].raw["native_source"] in {"investing_sp_info_tech", "yahoo_us_market", "investing_us_indices"}
+
+
+def test_search_web_keeps_native_fx_data_for_exchange_rate_queries(tmp_path) -> None:
+    client = FinRecallClient(
+        db_path=tmp_path / "research.sqlite",
+        provider=NativeFinanceProvider(),
+    )
+
+    outcome = client.search_web(
+        "美元兑人民币 2025年12月31日 收盘 汇率 USDCNY 7.0 7.1",
+        max_results=3,
+        force_refresh=True,
+    )
+
+    assert outcome.error is None
+    assert outcome.results
+    assert outcome.results[0].raw["native_source"] in {"investing_usdcny", "safe_fx_rates", "bankofchina_fx"}
+
+
+def test_search_web_keeps_native_japan_market_data_for_market_queries(tmp_path) -> None:
+    client = FinRecallClient(
+        db_path=tmp_path / "research.sqlite",
+        provider=NativeFinanceProvider(),
+    )
+
+    outcome = client.search_web(
+        "日本股市 东证指数 TOPIX 2026年5月 最新走势 日元汇率",
+        max_results=3,
+        force_refresh=True,
+    )
+
+    assert outcome.error is None
+    assert outcome.results
+    assert outcome.results[0].raw["native_source"] in {"investing_topix", "jpx_topix", "nikkei_topix"}
+
+
+def test_search_web_keeps_native_stock_data_for_drop_event_queries(tmp_path) -> None:
+    client = FinRecallClient(
+        db_path=tmp_path / "research.sqlite",
+        provider=NativeFinanceProvider(quote_fetch_deadline_seconds=0),
+    )
+
+    outcome = client.search_web(
+        "新大陆 000997 大跌 2026年5月28日 5月29日",
+        max_results=3,
+        force_refresh=True,
+    )
+
+    assert outcome.error is None
+    assert outcome.results
+    assert outcome.results[0].raw["native_source"] in {"eastmoney_quote", "sina_quote"}
+
+
 def test_search_web_keeps_native_star_market_data_for_market_queries(tmp_path) -> None:
     client = FinRecallClient(
         db_path=tmp_path / "research.sqlite",
