@@ -325,7 +325,7 @@ def test_general_article_news_query_does_not_emit_search_portals() -> None:
 
     assert items
     assert {item.raw["native_source"] for item in items}.issubset(
-        {"sector_policy_news", "eastmoney_sector_board", "exchange_investor_education"}
+        {"sector_policy_news", "eastmoney_sector_board", "exchange_investor_education", "humanoid_robot_sector"}
     )
 
 
@@ -817,6 +817,203 @@ def test_nasdaq_short_name_routes_to_us_market_sources() -> None:
     assert items
     assert any(item.raw["native_source"] in {"investing_us_indices", "yahoo_us_market"} for item in items)
     assert "纳斯达克" in "\n".join(f"{item.title}\n{item.content}" for item in items)
+
+
+def test_trace_audit_sector_queries_route_to_specific_content() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    cases = [
+        (
+            "2026年4月航天军工板块行情 商业航天政策最新消息",
+            "commercial_space_policy",
+            ("航天军工", "商业航天"),
+        ),
+        (
+            "2026年食品饮料行业市场动态 业绩预期 消费股走势",
+            "food_beverage_sector",
+            ("食品饮料", "业绩预期", "消费股"),
+        ),
+        (
+            "白酒行业 2026年 消费复苏 投资价值 最新分析",
+            "baijiu_sector_research",
+            ("白酒行业", "消费复苏", "投资价值"),
+        ),
+        (
+            "2026年3月 机器人 人形机器人 投资机会 A股 宇树科技",
+            "humanoid_robot_sector",
+            ("机器人", "人形机器人", "宇树科技"),
+        ),
+    ]
+
+    for query, expected_source, expected_terms in cases:
+        items = provider.search(query, max_results=3, topic="general")
+        assert items[0].raw["native_source"] == expected_source
+        blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+        for term in expected_terms:
+            assert term in blob
+
+
+def test_trace_audit_strategy_etf_and_commodity_queries_are_specific() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    cases = [
+        (
+            "2026年4月 A股 市场风格 因子投资 动量 价值 质量因子",
+            "a_share_factor_style",
+            ("市场风格", "因子投资", "动量", "价值", "质量因子"),
+        ),
+        (
+            "东证ETF 最新 新闻 2026 03 ETF 东京 交易所 1694 场内基金",
+            "jpx_topix_etf",
+            ("东证ETF", "东京", "交易所", "1694", "场内基金"),
+        ),
+        (
+            "A股航空股 油价暴涨 历史走势 类似情况 2008 2022",
+            "aviation_oil_history",
+            ("航空股", "油价暴涨", "历史走势", "2008"),
+        ),
+        (
+            "2026年全球经济形势 地缘冲突 黄金避险需求",
+            "global_gold_safe_haven",
+            ("全球经济形势", "地缘冲突", "黄金避险需求"),
+        ),
+    ]
+
+    for query, expected_source, expected_terms in cases:
+        items = provider.search(query, max_results=3, topic="general")
+        assert items[0].raw["native_source"] == expected_source
+        blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+        for term in expected_terms:
+            assert term in blob
+
+
+def test_trace_audit_stock_theme_queries_include_company_and_theme() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    cases = [
+        (
+            "安克创新 300866 关税 美国 储能 AI芯片 2026年5月 最新",
+            "stock_theme_research",
+            ("安克创新", "300866", "关税", "储能", "AI芯片"),
+        ),
+        (
+            "旭光电子 600353 2026年 氮化铝 军工 最新动态",
+            "stock_theme_research",
+            ("旭光电子", "600353", "氮化铝", "军工"),
+        ),
+        (
+            "A股 半导体 AI 芯片 2026年4月 最新政策 行情",
+            "semiconductor_ai_policy_market",
+            ("半导体", "AI", "芯片", "最新政策"),
+        ),
+    ]
+
+    for query, expected_source, expected_terms in cases:
+        items = provider.search(query, max_results=3, topic="general")
+        assert items[0].raw["native_source"] == expected_source
+        blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+        for term in expected_terms:
+            assert term in blob
+
+
+def test_trace_audit_remaining_market_and_fund_queries_cover_salient_terms() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    cases = [
+        (
+            "2026年4月 A股市场板块资金流向 主力资金买入 最新新闻",
+            "eastmoney_moneyflow",
+            ("2026年4月", "A股市场板块资金流向", "主力资金买入"),
+        ),
+        (
+            "A股 2026年4月29日 市场震荡 最新政策 资金面",
+            "sina_a_share_market",
+            ("2026年4月29日", "市场震荡", "最新政策", "资金面"),
+        ),
+        (
+            "2026年4月14日 A股 开盘 实时 行情",
+            "sina_a_share_market",
+            ("2026年4月14日", "开盘", "实时"),
+        ),
+        (
+            "A股主动基金 平均换手率 二级债基 调仓频率 季度 2025 2026",
+            "fund_turnover_research",
+            ("A股主动基金", "平均换手率", "二级债基", "调仓频率", "季度"),
+        ),
+        (
+            "2026年4月 A股市场 宽基ETF 投资 定投 政策 推荐",
+            "broad_based_etf_strategy",
+            ("2026年4月", "A股市场", "宽基ETF", "定投", "政策", "推荐"),
+        ),
+        (
+            "原油价格 2026年4月 暴涨10% 原因",
+            "investing_crude_oil",
+            ("原油价格", "2026年4月", "暴涨10%"),
+        ),
+    ]
+
+    for query, expected_source, expected_terms in cases:
+        items = provider.search(query, max_results=3, topic="general")
+        assert items[0].raw["native_source"] == expected_source
+        blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+        for term in expected_terms:
+            assert term in blob
+
+
+def test_trace_audit_alias_and_hk_company_queries_preserve_user_terms() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    cases = [
+        ("ST天箭 最新消息 2026年", ("ST天箭",)),
+        ("华能蒙电 股票 分析 最新消息", ("华能蒙电",)),
+        (
+            "小米集团 2025年财报 收入构成 智能手机 IoT 互联网服务 业务表现",
+            ("小米集团", "2025年财报", "收入构成", "智能手机", "IoT", "互联网服务", "业务表现"),
+        ),
+        (
+            "胜宏科技 300476 2026年5月 最新动态 PCB",
+            ("胜宏科技", "300476", "2026年5月", "PCB"),
+        ),
+    ]
+
+    for query, expected_terms in cases:
+        items = provider.search(query, max_results=3, topic="general")
+        blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+        for term in expected_terms:
+            assert term in blob
+
+
+def test_trace_audit_remaining_report_and_cycle_queries_cover_salient_terms() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    cases = [
+        (
+            '"161128" 标普信息科技 资产配置 股票仓位 债券 现金 2026年一季报 年报 占比',
+            ("标普信息科技", "资产配置", "股票仓位", "债券", "现金", "2026年一季报", "年报", "占比"),
+        ),
+        (
+            "民生银行 2025年 年报 不良贷款率 1.24% 资本充足率 9.38%",
+            ("民生银行", "2025年", "年报", "不良贷款率", "1.24%", "资本充足率", "9.38%"),
+        ),
+        (
+            "电力板块 2026年4月 最新政策 电价改革 新能源转型 市场动态",
+            ("电力板块", "2026年4月", "最新政策", "电价改革", "新能源转型", "市场动态"),
+        ),
+        (
+            "美股 2026年5月12日 科技股暴跌 原因 VIX 苹果 思科",
+            ("美股", "2026年5月12日", "科技股暴跌", "VIX", "苹果", "思科"),
+        ),
+        (
+            "XBI 标普生物科技指数 110%涨幅 2025-2026 降息周期 生物科技轮动逻辑",
+            ("XBI", "标普生物科技指数", "110%涨幅", "2025-2026", "降息周期", "生物科技轮动逻辑"),
+        ),
+    ]
+
+    for query, expected_terms in cases:
+        items = provider.search(query, max_results=4, topic="general")
+        blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+        for term in expected_terms:
+            assert term in blob
 
 
 def test_default_provider_uses_native_finance(monkeypatch) -> None:

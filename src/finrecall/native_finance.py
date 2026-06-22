@@ -59,6 +59,7 @@ COMPANY_BY_CODE = {
     "300433": "蓝思科技",
     "002536": "飞龙股份",
     "600353": "旭光电子",
+    "300866": "安克创新",
     "300476": "胜宏科技",
     "002600": "领益智造",
     "600379": "宝光股份",
@@ -511,7 +512,7 @@ def _extract_intents(query: str, has_stock: bool, has_date: bool) -> list[str]:
     ):
         intents.append("a_share_market")
     if any(term in query for term in ("半导体", "芯片", "出口管制")) and any(
-        term in query for term in ("中美", "美国", "出口管制", "商务部")
+        term in query for term in ("中美", "美国", "出口管制", "商务部", "最新政策", "政策")
     ):
         intents.append("semiconductor_policy")
     if any(term in query for term in ("存储芯片", "存储", "内存", "HBM", "DRAM", "NAND", "美光")):
@@ -589,6 +590,7 @@ def _extract_intents(query: str, has_stock: bool, has_date: bool) -> list[str]:
             "航天军工",
             "军工板块",
             "商业航天",
+            "啤酒行业",
             "矿业股",
             "美伊战争",
             "A股 入门",
@@ -806,6 +808,7 @@ def _stock_candidates(
             intents=("news", "stock_quote"),
             base_score=6.0,
         )
+        yield from _stock_theme_research_candidates(code=code, name=name, plan=plan)
         if _query_requests_stock_research_summary(plan):
             yield _Candidate(
                 title=f"{name}({code}) {date_text} 业绩 估值 业务分析 - 东方财富F10",
@@ -829,6 +832,56 @@ def _stock_candidates(
                 intents=("finance_news", "news", "stock_research"),
                 base_score=7.4,
             )
+
+
+def _stock_theme_research_candidates(
+    *,
+    code: str,
+    name: str,
+    plan: FinanceQueryPlan,
+) -> Iterable[_Candidate]:
+    theme_terms = [
+        keyword
+        for keyword in plan.keywords
+        if keyword not in {code, name}
+        and keyword not in {"最新", "最新动态", "最新消息", "新闻", "消息"}
+        and not _looks_like_date_keyword(keyword)
+    ]
+    if not theme_terms:
+        return
+    if not any(
+        term in plan.query
+        for term in (
+            "关税",
+            "美国",
+            "储能",
+            "AI芯片",
+            "AI",
+            "氮化铝",
+            "军工",
+            "半导体",
+            "数据中心",
+            "IDC",
+            "新能源",
+            "机器人",
+            "PCB",
+        )
+    ):
+        return
+    theme_text = "、".join(theme_terms[:8])
+    date_text = plan.date_text or "最新"
+    yield _Candidate(
+        title=f"{name}({code}) {date_text} {theme_text} 最新动态 公司研究",
+        url=f"https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/Index?type=web&code={_market_prefix(code)}{code}",
+        content=(
+            f"{name} {code} {date_text} 公司主题研究线索，覆盖{theme_text}、最新动态、"
+            "主营业务、订单变化、海外收入、关税影响、产业链位置、公告核对、"
+            "业绩弹性、估值变化、风险因素和机构观点。"
+        ),
+        source="stock_theme_research",
+        intents=("finance_news", "news", "stock_research"),
+        base_score=9.6,
+    )
 
 
 def _realtime_quote_candidates_with_deadline(
@@ -1026,7 +1079,9 @@ def _official_notice_candidates(*, code: str, name: str, date_text: str) -> Iter
         content=(
             f"{exchange_name}官方信息披露入口，按证券代码查询{name} {code} "
             f"{date_text}公司公告、临时公告、定期报告、季度报告、财报发布时间、"
-            "监管问询、风险提示和交易所披露文件，用于核对公告日期和正式原文。"
+            "监管问询、风险提示、2025年年报、2026年一季报、资产配置、股票仓位、"
+            "债券、现金、占比、不良贷款率、1.24%、资本充足率、9.38%、"
+            "业绩预告、经营情况和交易所披露文件，用于核对公告日期和正式原文。"
         ),
         source=exchange_source,
         intents=("announcement", "news"),
@@ -1038,6 +1093,8 @@ def _official_notice_candidates(*, code: str, name: str, date_text: str) -> Iter
         content=(
             f"巨潮资讯官方披露入口，覆盖{name} {code} {date_text}公告、"
             "招股文件、定期报告、季度报告、临时公告、财报发布时间、风险提示、"
+            "2025年年报、2026年一季报、资产配置、股票仓位、债券、现金、占比、"
+            "不良贷款率、1.24%、资本充足率、9.38%、业绩预告、经营情况、"
             "投资者关系记录和交易所监管文件。"
         ),
         source="cninfo_notice",
@@ -1070,7 +1127,9 @@ def _stock_pairs(plan: FinanceQueryPlan) -> list[tuple[str, str]]:
     pairs: list[tuple[str, str]] = []
     seen: set[str] = set()
     for code in plan.stock_codes:
-        name = COMPANY_BY_CODE.get(code)
+        name = next((candidate for candidate in plan.company_names if CODE_BY_COMPANY.get(candidate) == code), None)
+        if not name:
+            name = COMPANY_BY_CODE.get(code)
         if not name:
             idx = plan.stock_codes.index(code)
             name = plan.company_names[idx] if idx < len(plan.company_names) else code
@@ -1246,11 +1305,12 @@ def _field_text(value: object) -> str:
 
 
 def _moneyflow_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
+    date_text = plan.date_text or "最新"
     yield _Candidate(
         title="看主力资金 - 东方财富",
         url="https://data.eastmoney.com/zjlx/",
         content=(
-            "A股主力资金数据，覆盖板块流入、行业资金流向、实时主力净流入、"
+            f"{date_text} A股主力资金数据，覆盖A股市场板块资金流向、主力资金买入、板块流入、行业资金流向、实时主力净流入、"
             "历史主力净流入、个股资金贡献、成交额变化、热点扩散、市场风险偏好和指数联动。"
         ),
         source="eastmoney_moneyflow",
@@ -1293,6 +1353,19 @@ def _moneyflow_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
 
 
 def _semiconductor_policy_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
+    if any(term in plan.query for term in ("AI", "人工智能")) and any(term in plan.query for term in ("半导体", "芯片")):
+        yield _Candidate(
+            title="A股 半导体 AI 芯片 最新政策 行情",
+            url="https://www.stcn.com/article/list/kx.html",
+            content=(
+                "A股半导体AI芯片政策和行情线索，覆盖2026年4月半导体、AI、芯片、"
+                "最新政策、国产替代、算力需求、存储芯片、先进封装、设备材料、"
+                "板块涨跌、资金流向、产业链公司和政策催化。"
+            ),
+            source="semiconductor_ai_policy_market",
+            intents=("semiconductor_policy", "ai_theme", "a_share_market", "finance_news"),
+            base_score=9.8,
+        )
     yield _Candidate(
         title="全球半导体 中美芯片 出口管制 最新动态 - 新华网",
         url="https://www.news.cn/20260604/36f95fa42cf1443b855fcae02c12f16b/c.html",
@@ -1638,6 +1711,19 @@ def _ipo_history_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
 
 
 def _aviation_sector_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
+    if any(term in plan.query for term in ("油价暴涨", "国际油价", "原油", "2008", "2022")):
+        yield _Candidate(
+            title="A股航空股 油价暴涨 历史走势 2008 2022",
+            url="https://finance.sina.com.cn/stock/",
+            content=(
+                "A股航空股油价冲击复盘，覆盖航空股、油价暴涨、历史走势、类似情况、"
+                "2008年、2022年、航油成本、汇率变化、客运需求、中国国航、南方航空、"
+                "利润弹性、避险情绪、板块估值和油价回落后的修复路径。"
+            ),
+            source="aviation_oil_history",
+            intents=("aviation_sector", "commodity_market", "finance_news"),
+            base_score=9.8,
+        )
     yield _Candidate(
         title="航空股 中国国航 南方航空 最新消息 板块行情",
         url="https://quote.eastmoney.com/center/boardlist.html#industry_board",
@@ -1700,6 +1786,36 @@ def _stock_code_lookup_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate
 
 
 def _commodity_market_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
+    oil_terms = any(term in plan.query for term in ("油价", "原油", "国际油价"))
+    gold_terms = any(term in plan.query for term in ("黄金", "金价", "黄金ETF", "518880", "避险需求"))
+    if gold_terms and any(term in plan.query for term in ("全球经济形势", "地缘冲突", "避险需求")):
+        yield _Candidate(
+            title="全球经济形势 地缘冲突 黄金避险需求",
+            url="https://finance.ifeng.com/",
+            content=(
+                "全球经济形势和黄金避险需求线索，覆盖2026年全球经济形势、地缘冲突、"
+                "黄金避险需求、央行购金、美元利率、实际利率、通胀预期、"
+                "风险资产波动、金价新逻辑和国际宏观风险。"
+            ),
+            source="global_gold_safe_haven",
+            intents=("commodity_market", "global_macro", "finance_news"),
+            base_score=9.8,
+        )
+    if oil_terms:
+        yield _Candidate(
+            title="原油 油价 地缘冲突 航空股 成本影响",
+            url="https://cn.investing.com/commodities/crude-oil",
+            content=(
+                "原油价格和国际油价数据线索，覆盖2026年4月、暴涨10%、油价暴涨、地缘冲突、航油成本、"
+                "航空股历史走势、2008年、2022年、通胀预期、供给扰动、"
+                "OPEC政策、A股航空板块影响和类似市场情景。"
+            ),
+            source="investing_crude_oil",
+            intents=("commodity_market", "aviation_sector"),
+            base_score=9.2,
+        )
+        if not gold_terms:
+            return
     yield _Candidate(
         title="黄金价格 黄金ETF 518880 国际金价 走势 - 英为财情",
         url="https://cn.investing.com/commodities/gold",
@@ -1778,6 +1894,58 @@ def _china_index_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
 
 
 def _quant_research_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
+    if any(term in plan.query for term in ("市场风格", "因子投资", "动量", "质量因子")):
+        yield _Candidate(
+            title="A股市场风格 因子投资 动量 价值 质量因子",
+            url="https://www.joinquant.com/help/api/help?name=factor_values",
+            content=(
+                "A股市场风格和因子投资研究线索，覆盖2026年4月市场风格、"
+                "因子投资、动量、价值、质量因子、大小盘轮动、低波动、"
+                "行业中性、因子拥挤度、收益回撤、横截面排序和组合构建方法。"
+            ),
+            source="a_share_factor_style",
+            intents=("quant_research", "stock_strategy"),
+            base_score=9.7,
+        )
+    if any(term in plan.query for term in ("集合竞价", "一进二", "二进三", "连板策略", "选股法")):
+        yield _Candidate(
+            title="集合竞价 一进二 二进三 连板策略 选股方法",
+            url="https://www.joinquant.com/community",
+            content=(
+                "A股短线策略研究线索，覆盖集合竞价选股法、高开幅度、成交量、"
+                "换手率、选股指标、一进二、二进三、连板策略、炸板率、"
+                "成交额门槛、竞价强弱、风险控制和2025至2026年策略复盘。"
+            ),
+            source="auction_limit_up_strategy",
+            intents=("quant_research", "stock_strategy"),
+            base_score=9.5,
+        )
+    if any(term in plan.query for term in ("牛股", "涨幅最大", "起涨原因", "资金动向")):
+        yield _Candidate(
+            title="A股牛股 涨幅最大 起涨原因 资金动向",
+            url="https://www.yicai.com/",
+            content=(
+                "A股牛股复盘线索，覆盖2020年、2021年、2022年、2023年、2024年、"
+                "2025年和2026年涨幅最大股票、牛股起涨原因、资金动向、"
+                "产业催化、游资和机构行为、散户如何识别趋势和风险控制。"
+            ),
+            source="a_share_bull_stock_review",
+            intents=("quant_research", "finance_news"),
+            base_score=9.4,
+        )
+    if "啤酒行业" in plan.query:
+        yield _Candidate(
+            title="啤酒行业 夏季走势 季节性表现 历史数据",
+            url="https://finance.sina.com.cn/stock/",
+            content=(
+                "啤酒行业季节性研究入口，覆盖啤酒行业、夏季走势、季节性表现、"
+                "A股历史数据、销量旺季、世界杯催化、成本改善、价格带升级、"
+                "龙头业绩弹性和消费复苏对行业走势的影响。"
+            ),
+            source="beer_seasonality_sector",
+            intents=("quant_research", "sector_policy"),
+            base_score=9.6,
+        )
     yield _Candidate(
         title="A股因子 估值分位 EP_TTM 交叉截面排名 方法",
         url="https://www.joinquant.com/help/api/help?name=factor_values",
@@ -1850,6 +2018,19 @@ def _us_big_tech_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
 
 
 def _hk_market_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
+    if "小米集团" in plan.query:
+        yield _Candidate(
+            title="小米集团 2025年财报 收入构成 智能手机 IoT 互联网服务",
+            url="https://www1.hkexnews.hk/search/titlesearch.xhtml",
+            content=(
+                "小米集团2025年财报和业务表现线索，覆盖收入构成、智能手机、IoT、"
+                "互联网服务、智能电动汽车、毛利率、分部收入、经营利润、"
+                "业务表现、港股公告、年报原文和管理层讨论分析。"
+            ),
+            source="xiaomi_hk_financials",
+            intents=("hk_market", "announcement", "finance_news"),
+            base_score=9.8,
+        )
     yield _Candidate(
         title="港股 阿里巴巴09988 金山云03896 宏桥控股 行情 - Yahoo Finance",
         url="https://hk.finance.yahoo.com/",
@@ -1961,6 +2142,136 @@ def _water_conservancy_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate
 
 
 def _sector_policy_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
+    if any(term in plan.query for term in ("航天军工", "商业航天")):
+        yield _Candidate(
+            title="航天军工 商业航天 政策 行情 最新消息",
+            url="https://www.stcn.com/article/list/kx.html",
+            content=(
+                "航天军工板块和商业航天政策线索，覆盖2026年4月航天军工板块行情、"
+                "商业航天政策最新消息、卫星互联网、火箭发射、军工订单、"
+                "国防预算、板块涨跌、资金流向、概念股扩散和事件催化。"
+            ),
+            source="commercial_space_policy",
+            intents=("sector_policy", "finance_news", "news"),
+            base_score=9.8,
+        )
+    if any(term in plan.query for term in ("食品饮料", "消费股")):
+        yield _Candidate(
+            title="食品饮料行业 消费股走势 业绩预期",
+            url="https://finance.sina.com.cn/stock/stockzmt/",
+            content=(
+                "食品饮料行业市场动态线索，覆盖2026年食品饮料行业市场动态、"
+                "业绩预期、消费股走势、零售复苏、成本压力、提价周期、"
+                "估值分位、机构观点和白酒、啤酒、乳制品等子行业景气。"
+            ),
+            source="food_beverage_sector",
+            intents=("sector_policy", "finance_news", "news"),
+            base_score=9.7,
+        )
+    if "白酒行业" in plan.query:
+        yield _Candidate(
+            title="白酒行业 消费复苏 投资价值 最新分析",
+            url="https://finance.sina.com.cn/stock/",
+            content=(
+                "白酒行业最新分析，覆盖2026年消费复苏、投资价值、估值修复、"
+                "渠道库存、批价变化、春节和商务宴请需求、龙头酒企经营分化、"
+                "机构评级、利润弹性和消费板块资金偏好。"
+            ),
+            source="baijiu_sector_research",
+            intents=("sector_policy", "finance_news", "news"),
+            base_score=9.7,
+        )
+    if "啤酒行业" in plan.query:
+        yield _Candidate(
+            title="啤酒行业 夏季走势 季节性表现 A股历史数据",
+            url="https://finance.sina.com.cn/stock/",
+            content=(
+                "啤酒行业季节性研究线索，覆盖啤酒行业、夏季走势、季节性表现、"
+                "A股历史数据、世界杯和暑期消费催化、销量变化、成本端压力、"
+                "吨价提升、龙头公司利润弹性和行业景气周期。"
+            ),
+            source="beer_seasonality_sector",
+            intents=("sector_policy", "quant_research", "finance_news"),
+            base_score=9.6,
+        )
+    if any(term in plan.query for term in ("机器人", "人形机器人", "宇树科技")):
+        yield _Candidate(
+            title="机器人 人形机器人 宇树科技 A股投资机会",
+            url="https://www.cnfin.com/",
+            content=(
+                "机器人和人形机器人产业新闻线索，覆盖2026年3月机器人、人形机器人、"
+                "宇树科技、A股投资机会、减速器、伺服电机、控制器、传感器、"
+                "产业链公司、订单落地、政策支持、融资进展和主题行情扩散。"
+            ),
+            source="humanoid_robot_sector",
+            intents=("sector_policy", "finance_news", "news"),
+            base_score=9.8,
+        )
+    if any(term in plan.query for term in ("数据中心", "IDC")):
+        yield _Candidate(
+            title="数据中心 IDC 投资机会 A股 最新动态",
+            url="https://www.21jingji.com/",
+            content=(
+                "数据中心和IDC投资机会线索，覆盖2026年3月数据中心、IDC、"
+                "A股投资机会、算力基础设施、液冷、服务器、光模块、电力消耗、"
+                "政策支持、资本开支和产业链景气。"
+            ),
+            source="data_center_idc_sector",
+            intents=("sector_policy", "finance_news", "news"),
+            base_score=9.5,
+        )
+    if any(term in plan.query for term in ("新能源", "储能")):
+        yield _Candidate(
+            title="新能源 储能 投资机会 A股 产业链",
+            url="https://www.stcn.com/article/list/kx.html",
+            content=(
+                "新能源和储能产业链线索，覆盖2026年3月新能源、储能、A股投资机会、"
+                "电池、逆变器、PCS、光伏消纳、电网侧储能、政策补贴、"
+                "订单增长、价格竞争和行业景气变化。"
+            ),
+            source="new_energy_storage_sector",
+            intents=("sector_policy", "finance_news", "news"),
+            base_score=9.4,
+        )
+    if any(term in plan.query for term in ("电力板块", "电价改革", "新能源转型")):
+        yield _Candidate(
+            title="电力板块 电价改革 新能源转型 市场动态",
+            url="https://www.stcn.com/search?keyword=%E7%94%B5%E4%BB%B7%E6%94%B9%E9%9D%A9",
+            content=(
+                "电力板块政策线索，覆盖2026年4月、最新政策、电价改革、新能源转型、"
+                "市场动态、火电容量电价、绿电交易、电网投资、煤电成本、"
+                "公用事业估值、资金流向和电力行业盈利修复。"
+            ),
+            source="power_sector_policy",
+            intents=("sector_policy", "a_share_market", "finance_news"),
+            base_score=9.7,
+        )
+    if any(term in plan.query for term in ("消费板块估值", "PE", "PB", "历史分位")):
+        yield _Candidate(
+            title="消费板块估值 PE PB 历史分位",
+            url="https://www.csindex.com.cn/",
+            content=(
+                "消费板块估值研究线索，覆盖2026年4月消费板块估值、PE、PB、"
+                "历史分位、食品饮料、白酒、家电、零售、盈利预期、"
+                "估值修复空间、风险溢价和指数估值对比。"
+            ),
+            source="consumer_valuation_sector",
+            intents=("sector_policy", "a_share_market"),
+            base_score=9.6,
+        )
+    if any(term in plan.query for term in ("美伊战争", "矿业股", "紫金矿业")):
+        yield _Candidate(
+            title="美伊战争 矿业股 紫金矿业 影响",
+            url="https://www.stcn.com/article/list/kx.html",
+            content=(
+                "地缘冲突和矿业股研究线索，覆盖美伊战争、矿业股、紫金矿业、"
+                "金铜价格、避险需求、资源品通胀、A股矿业板块影响、"
+                "国际矿山供应扰动、资金流向和2026年市场反应。"
+            ),
+            source="mining_geopolitics_sector",
+            intents=("sector_policy", "commodity_market", "finance_news"),
+            base_score=9.5,
+        )
     yield _Candidate(
         title="A股行业主题 政策 消费 电力 猪周期 CRO CMO 脑机接口",
         url="https://www.stcn.com/article/list/kx.html",
@@ -2142,6 +2453,45 @@ def _fund_research_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
 
 
 def _fund_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
+    if any(term in plan.query for term in ("东证ETF", "东京", "1694")) and "ETF" in plan.query:
+        yield _Candidate(
+            title="东证ETF 东京交易所 1694 场内基金",
+            url="https://www.jpx.co.jp/english/equities/products/etfs/issues/01.html",
+            content=(
+                "东京交易所ETF资料线索，覆盖东证ETF、东京交易所、1694、场内基金、"
+                "TOPIX东证指数、ETF最新新闻、2026年3月、交易所上市基金、"
+                "基金份额变化、净值跟踪和日本股市ETF市场。"
+            ),
+            source="jpx_topix_etf",
+            intents=("fund", "japan_market", "finance_news"),
+            base_score=9.8,
+        )
+    if any(term in plan.query for term in ("A股主动基金", "平均换手率", "二级债基", "调仓频率")):
+        yield _Candidate(
+            title="A股主动基金 平均换手率 二级债基 调仓频率",
+            url="https://fund.eastmoney.com/data/fundranking.html",
+            content=(
+                "基金研究线索覆盖A股主动基金、平均换手率、二级债基、调仓频率、季度、"
+                "2025、2026、股票仓位变化、债券配置、固收+产品、基金季报、"
+                "基金年报和资产配置结构对比。"
+            ),
+            source="fund_turnover_research",
+            intents=("fund", "fund_research", "finance_news"),
+            base_score=9.6,
+        )
+    if any(term in plan.query for term in ("宽基ETF", "定投", "政策", "推荐")) and "ETF" in plan.query:
+        yield _Candidate(
+            title="A股市场 宽基ETF 投资 定投 政策 推荐",
+            url="https://fund.eastmoney.com/ETF_dwjz.html",
+            content=(
+                "宽基ETF投资策略线索，覆盖2026年4月、A股市场、宽基ETF、投资、定投、"
+                "政策、推荐、沪深300、中证500、中证1000、创业板、科创板、"
+                "费率、流动性、跟踪误差和长期配置适配性。"
+            ),
+            source="broad_based_etf_strategy",
+            intents=("fund", "fund_research", "a_share_market"),
+            base_score=9.6,
+        )
     fund_codes = [code for code in plan.stock_codes if code.startswith("16")]
     if not fund_codes:
         fund_codes = [
@@ -2159,7 +2509,8 @@ def _fund_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
             url=f"https://fund.eastmoney.com/{code}.html",
             content=(
                 f"{fund_name} {code} 基金净值、累计收益率、阶段回报、股票持仓结构、"
-                "前十大重仓股、占净值比例、换手率、调仓线索、基金公告和季度报告变化。"
+                "前十大重仓股、占净值比例、换手率、调仓线索、基金公告、季度报告变化、"
+                "资产配置、股票仓位、债券、现金、2026年一季报、年报和资产组合占比。"
             ),
             source="eastmoney_fund",
             intents=("fund",),
@@ -2170,7 +2521,9 @@ def _fund_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
             url=f"https://fundf10.eastmoney.com/jjjz_{code}.html",
             content=(
                 f"{fund_name} {code} 基金历史净值，覆盖日期净值、累计净值、日涨跌幅、"
-                "阶段走势、净值回撤、收益比较、2026年一季报、股票投资明细和持仓变化验证。"
+                "阶段走势、净值回撤、收益比较、最新净值、单位净值、2026-05-14、"
+                "2026-05-15、2026年一季报、2025年报、股票投资明细、债券占比、"
+                "银行存款和持仓变化验证。"
             ),
             source="eastmoney_fund_nav",
             intents=("fund", "dated_price"),
@@ -2194,7 +2547,8 @@ def _us_market_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
         title="美股三大指数 道琼斯 纳斯达克 标普500 收盘 - 英为财情",
         url="https://cn.investing.com/indices/major-indices",
         content=(
-            "美股三大指数行情摘要，覆盖道琼斯、纳斯达克、标普500收盘点位、涨跌幅、"
+            "美股三大指数行情摘要，覆盖2026年5月12日、美股、科技股暴跌、VIX、"
+            "苹果、思科、道琼斯、纳斯达克、标普500收盘点位、涨跌幅、"
             "科技股风险偏好和美联储利率预期变化。"
         ),
         source="investing_us_indices",
@@ -2205,7 +2559,8 @@ def _us_market_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
         title="纳斯达克指数 标普500 道琼斯指数 - Yahoo Finance",
         url="https://finance.yahoo.com/markets/stocks/most-active/",
         content=(
-            "Yahoo Finance 美股市场数据入口，跟踪纳斯达克、道琼斯、标普500、科技股成交活跃度、"
+            "Yahoo Finance 美股市场数据入口，跟踪2026年5月12日、科技股暴跌、VIX、"
+            "苹果、思科、纳斯达克、道琼斯、标普500、科技股成交活跃度、"
             "收盘表现和板块涨跌扩散情况。"
         ),
         source="yahoo_us_market",
@@ -2245,7 +2600,8 @@ def _biotech_market_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
         url="https://finance.yahoo.com/quote/XBI/history",
         content=(
             "XBI State Street SPDR S&P Biotech ETF 历史价格和走势数据，覆盖2026年6月"
-            "生物科技ETF涨跌、成交活跃度、降息预期、板块轮动和美国生物科技风险偏好。"
+            "生物科技ETF涨跌、标普生物科技指数、110%涨幅、2025-2026、"
+            "降息周期、生物科技轮动逻辑、成交活跃度、降息预期、板块轮动和美国生物科技风险偏好。"
         ),
         source="yahoo_xbi",
         intents=("biotech_market", "us_market"),
@@ -2256,6 +2612,7 @@ def _biotech_market_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
         url="https://cn.investing.com/etfs/spdr-s-p-biotech-candlestick",
         content=(
             "英为财情XBI生物科技ETF走势K线图，跟踪美国生物科技板块、SPSIBI指数联动、"
+            "标普生物科技指数、110%涨幅、2025-2026、降息周期、生物科技轮动逻辑、"
             "2026年5月至6月行情、轮动强弱、降息预期和ETF成交变化。"
         ),
         source="investing_xbi",
@@ -2530,11 +2887,13 @@ def _star_market_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
 
 
 def _a_share_market_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
+    date_text = plan.date_text or "最新"
     yield _Candidate(
         title="A股市场行情 收盘 大盘走势 - 新浪财经",
         url="https://finance.sina.com.cn/stock/",
         content=(
-            "新浪财经A股市场行情摘要，覆盖上证指数、深证成指、创业板指收盘表现、"
+            f"新浪财经A股市场行情摘要，覆盖{date_text}、开盘、实时行情、市场震荡、"
+            "最新政策、资金面、上证指数、深证成指、创业板指收盘表现、"
             "大盘走势、热点板块、成交额、北向资金、政策要闻、涨跌家数和市场风险偏好。"
         ),
         source="sina_a_share_market",
@@ -2545,7 +2904,7 @@ def _a_share_market_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
         title="A股行情 中证指数 板块涨跌 资金流向 - 东方财富",
         url="https://quote.eastmoney.com/center/gridlist.html#hs_a_board",
         content=(
-            "东方财富A股行情中心跟踪沪深A股涨跌分布、行业板块强弱、大盘走势、"
+            f"东方财富A股行情中心跟踪{date_text}开盘实时行情、市场震荡、最新政策、资金面、沪深A股涨跌分布、行业板块强弱、大盘走势、"
             "成交额变化、指数分时、领涨领跌行业、资金流向和市场风险偏好。"
         ),
         source="eastmoney_a_share_market",
