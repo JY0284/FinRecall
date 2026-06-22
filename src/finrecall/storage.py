@@ -387,6 +387,83 @@ class SearchStore:
             documents = [self._document_from_row(conn, row) for row in rows]
         return ArchiveSearchOutcome(query=query, results=documents, total=len(documents))
 
+    def trace_teacher_documents_for_query(self, query: str, *, limit: int = 10) -> list[DocumentRecord]:
+        self.ensure_migrated()
+        limit = min(max(1, limit), 100)
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT d.*, 0.0 AS score
+                FROM documents d
+                WHERE json_extract(d.raw_payload_json, '$.source') = 'tool_web_search_trace'
+                  AND json_extract(d.raw_payload_json, '$.teacher') = 'tavily'
+                  AND json_extract(d.raw_payload_json, '$.query') = ?
+                ORDER BY COALESCE(json_extract(d.raw_payload_json, '$.rank'), 999999) ASC,
+                    COALESCE(d.published_at, d.observed_at) DESC,
+                    d.id DESC
+                LIMIT ?
+                """,
+                (query.strip(), limit),
+            ).fetchall()
+            return [self._document_from_row(conn, row) for row in rows]
+
+    def trace_teacher_queries(self, *, limit: int = 100) -> list[str]:
+        self.ensure_migrated()
+        limit = min(max(1, limit), 1000)
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT json_extract(raw_payload_json, '$.query') AS query, MAX(observed_at) AS latest
+                FROM documents
+                WHERE json_extract(raw_payload_json, '$.source') = 'tool_web_search_trace'
+                  AND json_extract(raw_payload_json, '$.teacher') = 'tavily'
+                  AND COALESCE(json_extract(raw_payload_json, '$.query'), '') != ''
+                GROUP BY query
+                ORDER BY latest DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [str(row["query"]) for row in rows if row["query"]]
+
+    def trace_teacher_documents_matching_terms(
+        self,
+        terms: list[str],
+        *,
+        limit: int = 100,
+    ) -> list[DocumentRecord]:
+        self.ensure_migrated()
+        terms = [term.strip() for term in terms if term.strip()]
+        if not terms:
+            return []
+        limit = min(max(1, limit), 500)
+        clauses = []
+        params: list[Any] = []
+        for term in terms[:8]:
+            clauses.append(
+                """
+                (
+                    json_extract(d.raw_payload_json, '$.query') LIKE ?
+                    OR d.title LIKE ?
+                    OR d.content LIKE ?
+                )
+                """
+            )
+            like = f"%{term}%"
+            params.extend([like, like, like])
+        sql = f"""
+            SELECT d.*, 0.0 AS score
+            FROM documents d
+            WHERE json_extract(d.raw_payload_json, '$.source') = 'tool_web_search_trace'
+              AND json_extract(d.raw_payload_json, '$.teacher') = 'tavily'
+              AND ({" OR ".join(clauses)})
+            ORDER BY COALESCE(d.published_at, d.observed_at) DESC, d.id DESC
+            LIMIT ?
+        """
+        with self.connect() as conn:
+            rows = conn.execute(sql, [*params, limit]).fetchall()
+            return [self._document_from_row(conn, row) for row in rows]
+
     def stats(self) -> dict[str, int]:
         self.ensure_migrated()
         names = ("documents", "search_events", "search_results", "fetch_attempts")

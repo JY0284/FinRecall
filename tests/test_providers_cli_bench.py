@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from io import BytesIO
 from io import StringIO
+from io import TextIOWrapper
 import json
 
 from finrecall import FinRecallClient
 from finrecall.benchmark import run_synthetic_benchmark
-from finrecall.cli import main
-from finrecall.models import ProviderSearchItem
+from finrecall.cli import _write_json, main
+from finrecall.models import DocumentRecord, ProviderSearchItem
 
 
 class FakeProvider:
@@ -103,6 +105,70 @@ def test_cli_doctor_reports_runtime_management_state(tmp_path) -> None:
     assert "documents" in payload["stats"]
 
 
+def test_cli_compare_traces_reports_quality_summary(tmp_path) -> None:
+    client = FinRecallClient(
+        db_path=tmp_path / "research.sqlite",
+        provider=FakeProvider(),
+        cache_ttl_seconds=60,
+    )
+    client.storage.upsert_document(
+        DocumentRecord(
+            url="https://news.example.com/teacher",
+            title="A股市场新闻报道",
+            content="A股 市场 新闻 政策 资金面变化。",
+            raw_payload={
+                "source": "tool_web_search_trace",
+                "teacher": "tavily",
+                "query": "A股 新闻",
+                "rank": 1,
+            },
+        )
+    )
+
+    out = StringIO()
+    assert main(["compare-traces", "--max-cases", "1"], client=client, stdout=out) == 0
+    payload = json.loads(out.getvalue())
+
+    assert payload["summary"]["query_count"] == 1
+    assert payload["cases"][0]["query"] == "A股 新闻"
+
+
+def test_cli_compare_traces_can_include_actual_results(tmp_path) -> None:
+    client = FinRecallClient(
+        db_path=tmp_path / "research.sqlite",
+        provider=FakeProvider(),
+        cache_ttl_seconds=60,
+    )
+    client.storage.upsert_document(
+        DocumentRecord(
+            url="https://news.example.com/teacher",
+            title="A股市场新闻报道",
+            content="A股 市场 新闻 政策 资金面变化。",
+            raw_payload={
+                "source": "tool_web_search_trace",
+                "teacher": "tavily",
+                "query": "A股 新闻",
+                "rank": 1,
+            },
+        )
+    )
+
+    out = StringIO()
+    assert (
+        main(
+            ["compare-traces", "--max-cases", "1", "--include-results", "--snippet-chars", "8"],
+            client=client,
+            stdout=out,
+        )
+        == 0
+    )
+    payload = json.loads(out.getvalue())
+
+    case = payload["cases"][0]
+    assert case["teacher"]["results"][0]["title"] == "A股市场新闻报道"
+    assert case["finrecall"]["results"][0]["snippet"] == "A股 新闻 A股"
+
+
 def test_cli_accepts_db_after_management_subcommand(tmp_path) -> None:
     db_path = tmp_path / "research.sqlite"
 
@@ -112,3 +178,13 @@ def test_cli_accepts_db_after_management_subcommand(tmp_path) -> None:
 
     assert payload["database"]["path"] == str(db_path)
     assert payload["database"]["exists"] is True
+
+
+def test_cli_json_output_falls_back_when_stdout_encoding_rejects_text() -> None:
+    buffer = BytesIO()
+    stream = TextIOWrapper(buffer, encoding="gbk")
+
+    _write_json(stream, {"text": "A\u00a0股"})
+    stream.flush()
+
+    assert b"\\u00a0" in buffer.getvalue()

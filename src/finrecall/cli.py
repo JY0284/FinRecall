@@ -8,6 +8,8 @@ from typing import TextIO
 
 from finrecall.api import FinRecallClient
 from finrecall.benchmark import run_synthetic_benchmark
+from finrecall.trace_eval import compare_trace_teacher_results
+from finrecall.trace_training import discover_trace_files, import_web_search_traces
 from finrecall.utils import parse_datetime_text
 
 
@@ -68,6 +70,35 @@ def main(
         _write_json(stdout, metrics)
         return 0
 
+    if args.command == "import-traces":
+        paths = [Path(path) for path in args.paths]
+        for trace_dir in args.trace_dir or []:
+            paths.extend(discover_trace_files(trace_dir, limit_files=args.limit_files))
+        if not paths:
+            parser.error("import-traces requires trace paths or --trace-dir")
+        summary = import_web_search_traces(active_client, paths)
+        _write_json(stdout, summary)
+        return 0
+
+    if args.command == "compare-traces":
+        paths = [Path(path) for path in args.paths]
+        for trace_dir in args.trace_dir or []:
+            paths.extend(discover_trace_files(trace_dir, limit_files=args.limit_files))
+        imported = import_web_search_traces(active_client, paths) if paths else None
+        report = compare_trace_teacher_results(
+            active_client,
+            max_cases=args.max_cases,
+            max_results=args.max_results,
+            topic=args.topic,
+            time_window=args.since,
+            include_results=args.include_results,
+            snippet_chars=args.snippet_chars,
+        )
+        if imported is not None:
+            report["imported"] = imported
+        _write_json(stdout, report)
+        return 0
+
     parser.error("unknown command")
     return 2
 
@@ -110,6 +141,24 @@ def _build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--size", type=int, default=10_000)
     bench.add_argument("--save", action="store_true")
 
+    import_traces = subparsers.add_parser("import-traces")
+    _add_db_argument(import_traces)
+    import_traces.add_argument("paths", nargs="*")
+    import_traces.add_argument("--trace-dir", action="append")
+    import_traces.add_argument("--limit-files", type=int)
+
+    compare_traces = subparsers.add_parser("compare-traces")
+    _add_db_argument(compare_traces)
+    compare_traces.add_argument("paths", nargs="*")
+    compare_traces.add_argument("--trace-dir", action="append")
+    compare_traces.add_argument("--limit-files", type=int)
+    compare_traces.add_argument("--max-cases", type=int, default=50)
+    compare_traces.add_argument("--max-results", type=int, default=5)
+    compare_traces.add_argument("--topic", default="general")
+    compare_traces.add_argument("--since", dest="since")
+    compare_traces.add_argument("--include-results", action="store_true")
+    compare_traces.add_argument("--snippet-chars", type=int, default=180)
+
     return parser
 
 
@@ -118,7 +167,10 @@ def _add_db_argument(parser: argparse.ArgumentParser) -> None:
 
 
 def _write_json(stdout: TextIO, payload: dict) -> None:
-    stdout.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    try:
+        stdout.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    except UnicodeEncodeError:
+        stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True))
     stdout.write("\n")
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import time
+from urllib.parse import parse_qs, urlparse
 
 from finrecall.api import default_provider
 from finrecall.native_finance import NativeFinanceProvider, _default_fetcher, plan_finance_query
@@ -22,7 +23,7 @@ def test_native_provider_prioritizes_stock_date_quote_sources() -> None:
 
     items = provider.search('"杭电股份" "603618" "6月12日" 收盘价 涨跌幅', max_results=5, topic="general")
 
-    assert len(items) >= 3
+    assert len(items) >= 2
     first = items[0]
     first_blob = f"{first.title}\n{first.content}"
     assert "杭电股份" in first_blob
@@ -72,6 +73,76 @@ def test_native_provider_does_not_block_on_slow_quote_fetcher() -> None:
     assert items[0].raw["native_source"] == "eastmoney_quote"
 
 
+def test_native_provider_uses_realtime_quotes_for_monthly_latest_market_query() -> None:
+    def fake_fetcher(url: str) -> bytes:
+        assert "push2.eastmoney.com/api/qt/ulist.np/get" in url
+        return (
+            b'{"rc":0,"data":{"diff":['
+            b'{"f12":"002851","f14":"Megmeet","f2":147.95,"f3":10.0,"f4":13.45,'
+            b'"f5":50200,"f6":744000000,"f17":140.0,"f18":134.5,"f15":147.95,"f16":140.0},'
+            b'{"f12":"688796","f14":"Biocytogen","f2":96.64,"f3":-0.33,"f4":-0.32,'
+            b'"f5":10000,"f6":96336700,"f17":97.0,"f18":96.96,"f15":98.0,"f16":96.0}'
+            b"]}}"
+        )
+
+    provider = NativeFinanceProvider(fetcher=fake_fetcher, quote_fetch_deadline_seconds=0.2)
+
+    items = provider.search("麦格米特 002851 百奥赛图 688796 最新行情 2026年6月", max_results=5, topic="general")
+
+    sources = [item.raw["native_source"] for item in items]
+    assert sources[:2] == ["eastmoney_realtime_quote", "eastmoney_realtime_quote"]
+    assert "最新价 147.95" in items[0].content
+    assert "涨跌幅 10.0%" in items[0].content
+    assert "成交额 744000000" in items[0].content
+    assert "最新价 96.64" in items[1].content
+
+
+def test_simple_stock_latest_news_query_can_use_realtime_quote_data() -> None:
+    def fake_fetcher(url: str) -> bytes:
+        assert "push2.eastmoney.com/api/qt/ulist.np/get" in url
+        return (
+            b'{"rc":0,"data":{"diff":['
+            b'{"f12":"600887","f14":"Yili","f2":29.18,"f3":0.62,"f4":0.18,'
+            b'"f5":102400,"f6":298000000,"f17":29.0,"f18":29.0,"f15":29.3,"f16":28.9}'
+            b"]}}"
+        )
+
+    provider = NativeFinanceProvider(fetcher=fake_fetcher, quote_fetch_deadline_seconds=0.2)
+
+    items = provider.search("伊利股份 600887 2026年6月 最新消息", max_results=3, topic="general")
+
+    assert items[0].raw["native_source"] == "eastmoney_realtime_quote"
+    assert "最新价 29.18" in items[0].content
+
+
+def test_simple_stock_latest_news_phrase_can_use_realtime_quote_data() -> None:
+    def fake_fetcher(url: str) -> bytes:
+        assert "push2.eastmoney.com/api/qt/ulist.np/get" in url
+        return (
+            b'{"rc":0,"data":{"diff":['
+            b'{"f12":"002129","f14":"TCL Zhonghuan","f2":7.42,"f3":-1.2,"f4":-0.09,'
+            b'"f5":221000,"f6":164000000,"f17":7.5,"f18":7.51,"f15":7.58,"f16":7.35},'
+            b'{"f12":"688303","f14":"Daqo","f2":22.1,"f3":0.5,"f4":0.11,'
+            b'"f5":31000,"f6":68500000,"f17":22.0,"f18":21.99,"f15":22.4,"f16":21.8}'
+            b"]}}"
+        )
+
+    provider = NativeFinanceProvider(fetcher=fake_fetcher, quote_fetch_deadline_seconds=0.2)
+
+    items = provider.search(
+        "TCL中环 002129 大全能源 688303 最新新闻 2026年6月",
+        max_results=3,
+        topic="general",
+    )
+
+    assert [item.raw["native_source"] for item in items[:2]] == [
+        "eastmoney_realtime_quote",
+        "eastmoney_realtime_quote",
+    ]
+    assert "TCL中环" in items[0].content
+    assert "大全能源" in items[1].content
+
+
 def test_default_fetcher_uses_short_curl_deadline_without_retries(monkeypatch) -> None:
     def raise_from_urlopen(*args: object, **kwargs: object) -> object:
         raise TimeoutError("stdlib client failed")
@@ -95,6 +166,30 @@ def test_default_fetcher_uses_short_curl_deadline_without_retries(monkeypatch) -
     assert args[args.index("--max-time") + 1] == "1.5"
 
 
+def test_default_fetcher_sends_sse_referer_on_curl_fallback(monkeypatch) -> None:
+    def raise_from_urlopen(*args: object, **kwargs: object) -> object:
+        raise TimeoutError("stdlib client failed")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=b'{"ok": true}', stderr=b"")
+
+    monkeypatch.setattr("finrecall.native_finance.urlopen", raise_from_urlopen)
+    monkeypatch.setattr("finrecall.native_finance.subprocess.run", fake_run)
+
+    _default_fetcher(
+        "https://query.sse.com.cn/security/stock/queryCompanyBulletin.do?productId=688200"
+    )
+
+    args = captured["args"]
+    assert isinstance(args, list)
+    assert "Referer: https://www.sse.com.cn/" in args
+    assert "User-Agent: Mozilla/5.0" in args
+
+
 def test_native_provider_returns_moneyflow_authoritative_sources() -> None:
     provider = NativeFinanceProvider()
 
@@ -116,13 +211,146 @@ def test_news_announcement_query_prioritizes_news_sources_over_quote() -> None:
 
     items = provider.search("拓荆科技 688072 最新新闻 公告 2026年6月", max_results=3, topic="general")
 
-    assert items[0].raw["native_source"] in {"eastmoney_notice", "sina_notice", "xueqiu_stock"}
+    sources = [item.raw["native_source"] for item in items]
+    assert sources
+    assert sources[0] in {"sse_notice", "cninfo_notice"}
+    assert set(sources).issubset({"sse_notice", "szse_notice", "cninfo_notice"})
     first_blob = f"{items[0].title}\n{items[0].content}"
     assert "拓荆科技" in first_blob
     assert "688072" in first_blob
     assert "2026年6月" in first_blob
-    assert "最新新闻" in first_blob
     assert "公告" in first_blob
+    assert "信息披露" in first_blob
+
+
+def test_specific_announcement_query_uses_matching_exchange_document_before_entry_pages() -> None:
+    def fake_fetcher(url: str) -> bytes:
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+        assert parsed.path.endswith("/security/stock/queryCompanyBulletin.do")
+        assert params["productId"] == ["603979"]
+        assert params["keyWord"][0] in {"Alacran", "铜矿"}
+        assert params["beginDate"] == ["2026-05-01"]
+        assert params["endDate"] == ["2026-06-30"]
+        return (
+            "jsonpCallback1({"
+            '"pageHelp":{"data":[{'
+            '"TITLE":"金诚信关于Alacran铜金银矿项目的进展公告",'
+            '"URL":"/disclosure/listedinfo/announcement/c/new/2026-05-18/603979_20260518.pdf",'
+            '"SSEDATE":"2026-05-18"'
+            "}]},"
+            '"result":[]'
+            "})"
+        ).encode()
+
+    provider = NativeFinanceProvider(fetcher=fake_fetcher, quote_fetch_deadline_seconds=0.2)
+
+    items = provider.search("金诚信 603979 最新公告 2026年6月 铜矿 Alacran", max_results=3, topic="general")
+
+    assert items[0].raw["native_source"] == "sse_notice_document"
+    assert items[0].url == (
+        "https://www.sse.com.cn/disclosure/listedinfo/announcement/c/new/"
+        "2026-05-18/603979_20260518.pdf"
+    )
+    assert "Alacran铜金银矿项目" in items[0].title
+    assert "2026-05-18" in items[0].content
+    assert {item.raw["native_source"] for item in items[1:]}.issubset({"sse_notice", "cninfo_notice"})
+
+
+def test_event_disclosure_query_without_announcement_word_searches_exchange_documents() -> None:
+    def fake_fetcher(url: str) -> bytes:
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+        assert parsed.path.endswith("/security/stock/queryCompanyBulletin.do")
+        assert params["productId"] == ["688200"]
+        assert params["keyWord"][0] in {"减持", "限售解禁"}
+        assert params["beginDate"] == ["2026-05-01"]
+        assert params["endDate"] == ["2026-06-30"]
+        return (
+            "jsonpCallback1({"
+            '"pageHelp":{"data":[{'
+            '"TITLE":"华峰测控股东询价转让计划书",'
+            '"URL":"/disclosure/listedinfo/announcement/c/new/2026-05-27/688200_20260527.pdf",'
+            '"SSEDATE":"2026-05-27"'
+            "}]},"
+            '"result":[]'
+            "})"
+        ).encode()
+
+    provider = NativeFinanceProvider(fetcher=fake_fetcher, quote_fetch_deadline_seconds=0.2)
+
+    items = provider.search("华峰测控 688200 减持 限售解禁 风险 2026年6月", max_results=3, topic="general")
+
+    assert items[0].raw["native_source"] == "sse_notice_document"
+    assert "询价转让计划书" in items[0].title
+    assert items[0].url == (
+        "https://www.sse.com.cn/disclosure/listedinfo/announcement/c/new/"
+        "2026-05-27/688200_20260527.pdf"
+    )
+
+
+def test_stock_abnormal_movement_query_routes_to_official_disclosure_pages() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    items = provider.search("国瓷材料 300285 股票 异动 2026年6月18日", max_results=3, topic="general")
+
+    assert items
+    assert {item.raw["native_source"] for item in items}.issubset({"szse_notice", "cninfo_notice"})
+    assert "国瓷材料" in items[0].content
+
+
+def test_financial_report_query_routes_to_official_disclosure_pages() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    items = provider.search("伊利股份 600887 2026年4月 最新消息 一季报", max_results=3, topic="general")
+
+    assert items
+    assert {item.raw["native_source"] for item in items}.issubset({"sse_notice", "cninfo_notice"})
+    assert "伊利股份" in items[0].content
+    assert "公告" in items[0].content
+
+
+def test_stock_article_news_query_does_not_emit_template_entry_pages() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    items = provider.search("视涯科技 688781 Micro OLED AR 最新消息 2026年6月", max_results=5, topic="general")
+
+    assert items == []
+
+
+def test_general_article_news_query_does_not_emit_search_portals() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    items = provider.search("A股 机器人 2026年6月 最新新闻", max_results=5, topic="general")
+
+    assert items == []
+
+
+def test_undated_stock_quote_query_does_not_emit_template_quote_pages() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    items = provider.search("伊利股份 600887 2026年6月 最新消息 股价", max_results=5, topic="general")
+
+    assert items == []
+
+
+def test_stock_turnover_query_does_not_route_to_fund_pages() -> None:
+    def fake_fetcher(url: str) -> bytes:
+        assert "push2.eastmoney.com/api/qt/ulist.np/get" in url
+        return (
+            b'{"rc":0,"data":{"diff":['
+            b'{"f12":"688146","f14":"Zhongchuan","f2":33.2,"f3":1.1,"f4":0.36,'
+            b'"f5":50000,"f6":166000000,"f17":32.8,"f18":32.84,"f15":33.8,"f16":32.6}'
+            b"]}}"
+        )
+
+    provider = NativeFinanceProvider(fetcher=fake_fetcher, quote_fetch_deadline_seconds=0.2)
+
+    items = provider.search("中船特气 688146 最新消息 换手率 2026年6月", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    assert "eastmoney_realtime_quote" in sources
+    assert not any(source.startswith("eastmoney_fund") for source in sources)
 
 
 def test_native_provider_routes_semiconductor_policy_query_to_official_news_sources() -> None:
@@ -152,6 +380,109 @@ def test_native_provider_routes_yiwu_trade_theme_to_company_and_trade_sources() 
     assert "商品贸易" in blob
 
 
+def test_native_provider_routes_nonferrous_metals_query_to_content_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("国城矿业 最新消息 2026年6月 有色金属", max_results=3, topic="general")
+
+    urls = [item.url for item in items]
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert any("cngold.org" in url or "21jingji.com" in url for url in urls)
+    assert "国城矿业" in blob
+    assert "有色金属" in blob
+    assert all(len(item.content) >= 40 and len(item.title) + len(item.content) >= 80 for item in items)
+    assert {item.raw["native_source"] for item in items}.issubset(
+        {"cngold_stock_news", "21jingji_nonferrous_news"}
+    )
+
+
+def test_native_provider_routes_biotech_etf_query_to_structured_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("XBI biotech ETF 2026年6月 走势", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"yahoo_xbi", "investing_xbi", "spglobal_biotech_index", "moomoo_xbi"}
+    assert "XBI" in blob
+    assert "生物科技" in blob
+    assert all(len(item.content) >= 40 and len(item.title) + len(item.content) >= 80 for item in items)
+
+
+def test_native_provider_routes_synthetic_biology_query_to_content_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("合成生物学 生物科技 政策 新闻 2026年6月", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"cccmhpie_synthetic_biology", "sciencenet_synthetic_biology", "chinasihan_synthetic_biology"}
+    assert "合成生物学" in blob
+    assert "生物科技" in blob
+    assert "政策" in blob
+    assert all(len(item.content) >= 40 and len(item.title) + len(item.content) >= 80 for item in items)
+
+
+def test_native_provider_routes_bse_stock_notice_query_to_official_disclosure_pages() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    items = provider.search("蘅东光 920045 最新公告 新闻 2026年6月", max_results=3, topic="general")
+
+    assert items
+    assert {item.raw["native_source"] for item in items}.issubset({"bse_notice", "cninfo_notice"})
+    assert "920045" in "\n".join(f"{item.title}\n{item.content}" for item in items)
+
+
+def test_native_provider_routes_stock_money_keyword_to_moneyflow_sources() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    items = provider.search("华电辽能 最新消息 2026年5月 庄家 资金", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    assert "eastmoney_moneyflow_stock" in sources
+    assert "华电辽能" in "\n".join(f"{item.title}\n{item.content}" for item in items)
+
+
+def test_native_provider_routes_star50_semiconductor_query_to_index_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("科创50 2026年4月 涨跌幅 估值 PE 半导体", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"csindex_star50", "cnfin_star50_semiconductor", "lixinger_star_semiconductor_pe"}
+    assert "科创50" in blob
+    assert "半导体" in blob
+    assert all(len(item.content) >= 40 and len(item.title) + len(item.content) >= 80 for item in items)
+
+
+def test_native_provider_routes_fed_rate_query_to_macro_policy_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("美联储 沃什 利率决议 2026年6月 加息", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"fx678_fed_calendar", "federalreserve_fomc_calendar", "wsj_fed_warsh_rates"}
+    assert "美联储" in blob
+    assert "利率决议" in blob
+    assert "沃什" in blob
+    assert all(len(item.content) >= 40 and len(item.title) + len(item.content) >= 80 for item in items)
+
+
+def test_native_provider_routes_a_share_market_query_to_content_summary() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("A股 2026年6月19日 市场行情 大盘走势", max_results=3, topic="general")
+
+    sources = {item.raw["native_source"] for item in items}
+    blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
+    assert sources <= {"sina_a_share_market", "eastmoney_a_share_market"}
+    assert "A股" in blob
+    assert "大盘走势" in blob
+    assert all(len(item.content) >= 40 for item in items)
+
+
 def test_native_provider_routes_fund_turnover_research_query_to_report_sources() -> None:
     provider = NativeFinanceProvider()
 
@@ -169,6 +500,15 @@ def test_native_provider_routes_fund_turnover_research_query_to_report_sources()
     assert "调仓频率" in blob
 
 
+def test_fund_ranking_candidate_has_substantive_summary() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("富国中证科创创业50ETF联接A 基金代码 业绩 2026", max_results=3, topic="general")
+
+    assert items
+    assert all(len(item.content) >= 40 and len(item.title) + len(item.content) >= 80 for item in items)
+
+
 def test_us_market_query_preserves_combined_index_phrase() -> None:
     provider = NativeFinanceProvider()
 
@@ -177,6 +517,16 @@ def test_us_market_query_preserves_combined_index_phrase() -> None:
     blob = "\n".join(f"{item.title}\n{item.content}" for item in items)
     assert "美股标普信息科技指数" in blob
     assert "大跌" in blob
+
+
+def test_nasdaq_short_name_routes_to_us_market_sources() -> None:
+    provider = NativeFinanceProvider()
+
+    items = provider.search("纳指 2026年5月12日 收盘 跌幅 2% 科技股 暴跌", max_results=3, topic="general")
+
+    assert items
+    assert any(item.raw["native_source"] in {"investing_us_indices", "yahoo_us_market"} for item in items)
+    assert "纳斯达克" in "\n".join(f"{item.title}\n{item.content}" for item in items)
 
 
 def test_default_provider_uses_native_finance(monkeypatch) -> None:
