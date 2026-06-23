@@ -349,6 +349,46 @@ def test_bing_news_source_tries_compact_policy_variants() -> None:
     assert items[0].url == article_url
 
 
+def test_bing_news_source_ranks_policy_evidence_over_market_hype() -> None:
+    market_url = "https://finance.example.com/ai-chip-market.html"
+    policy_url = "https://policy.example.com/ai-chip-export-control.html"
+    rss_body = f"""
+    <rss version="2.0">
+      <channel>
+        <item>
+          <title>A股半导体AI芯片概念股再掀涨停潮，影响科技主线</title>
+          <link>https://www.bing.com/news/apiclick.aspx?url={market_url}</link>
+          <description>半导体AI芯片概念股活跃，A股板块成交放量。</description>
+          <pubDate>Tue, 24 Mar 2026 10:18:00 GMT</pubDate>
+        </item>
+        <item>
+          <title>AI芯片出口管制政策更新，产业链影响解读</title>
+          <link>https://www.bing.com/news/apiclick.aspx?url={policy_url}</link>
+          <description>监管规则和出口管制措施影响AI芯片与A股半导体产业链。</description>
+          <pubDate>Tue, 24 Mar 2026 10:18:00 GMT</pubDate>
+        </item>
+      </channel>
+    </rss>
+    """.encode()
+
+    def fetcher(url: str, headers: dict[str, str], timeout: float) -> FetchResponse:
+        if url.startswith("https://www.bing.com/news/search?"):
+            return FetchResponse(url=url, status=200, headers={"content-type": "application/xml"}, body=rss_body)
+        raise AssertionError(f"unexpected URL {url}")
+
+    harvester = KeylessSearchHarvester(
+        sources=[BingNewsRssSource(fetch_result_pages=False)],
+        fetcher=fetcher,
+        robots_policy=RobotsPolicy.allow_all(),
+        sleep_seconds=0,
+    )
+
+    items = harvester.search("半导体 AI 芯片 最新政策 A股 影响", max_results=1, topic="general")
+
+    assert len(items) == 1
+    assert items[0].url == policy_url
+
+
 def test_bing_news_source_tries_market_flow_variants() -> None:
     article_url = "https://finance.example.com/news/a-share-liquidity.html"
     empty_rss = b"""<rss version="2.0"><channel><title>empty</title></channel></rss>"""

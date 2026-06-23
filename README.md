@@ -82,5 +82,34 @@ FINRECALL_KEYLESS_TIMEOUT_SECONDS=5
 FINRECALL_KEYLESS_SLEEP_SECONDS=0.2
 ```
 
+Hybrid content queries also run a bounded final-result enrichment pass by
+default. It only fetches selected short article-like results, skips quote/fund
+pages and search portals, and is meant to make the returned `content` field
+closer to Tavily-style source text instead of a thin snippet.
+
+```env
+FINRECALL_CONTENT_ENRICHMENT=1
+FINRECALL_ENRICH_MIN_CONTENT_CHARS=500
+FINRECALL_ENRICH_MAX_RESULTS=2
+FINRECALL_ENRICH_TIMEOUT_SECONDS=3
+```
+
+An optional LLM rerank pass can be enabled for experiments after deterministic
+hard filters run. It is default-off, uses compact candidate snippets, disables
+DeepSeek thinking mode for low-latency JSON output, and falls back to the
+deterministic ranking on timeout, invalid JSON, or provider errors.
+
+```env
+FINRECALL_LLM_RERANK=1
+FINRECALL_LLM_MODEL=deepseek-v4-flash
+FINRECALL_LLM_API_KEY=...
+FINRECALL_LLM_BASE_URL=https://api.deepseek.com
+FINRECALL_LLM_TIMEOUT_SECONDS=2.5
+```
+
+If FinRecall runs inside a process that already loaded provider credentials,
+the reranker can also read `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, and
+`AGENT_MODEL`.
+
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for operations, backup, and
 verification guidance.

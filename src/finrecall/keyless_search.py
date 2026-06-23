@@ -40,6 +40,24 @@ QUERY_NOISE_TERMS = {
     "消息",
 }
 MIN_USEFUL_EXTRACTED_CONTENT_CHARS = 80
+POLICY_EVIDENCE_TERMS = (
+    "政策更新",
+    "政策解读",
+    "政策分歧",
+    "管制",
+    "监管",
+    "限制",
+    "制裁",
+    "法规",
+    "办法",
+    "意见",
+    "通知",
+    "指引",
+    "方案",
+    "合规",
+    "解读",
+)
+MARKET_HYPE_TERMS = ("概念股", "涨停", "成交放量", "板块活跃", "资金追捧")
 
 
 @dataclass(frozen=True)
@@ -400,12 +418,14 @@ def _query_variants(query: str) -> list[str]:
             _append_unique(variants, "AI芯片 A股")
         if "AI" in raw.upper() and "芯片" in raw:
             _append_unique(variants, "AI芯片 政策")
+            _append_unique(variants, "AI芯片 出口管制 政策")
         if "芯片" in raw:
             _append_unique(variants, "芯片 政策")
         if "半导体" in raw and ("A股" in raw or "a股" in raw.lower()):
             _append_unique(variants, "半导体 A股 政策")
         if "半导体" in raw:
             _append_unique(variants, "半导体 政策")
+            _append_unique(variants, "半导体 政策 解读")
 
     if "A股" in raw or "a股" in raw.lower():
         if "资金面" in raw:
@@ -446,7 +466,19 @@ def _candidate_relevance(candidate: SearchCandidate, query: str) -> float:
         score += 0.2
     if any(term in blob for term in ("财报", "年报", "业绩", "营收", "收入")):
         score += 0.2
+    if _query_requests_policy_context(query):
+        if any(term.lower() in blob for term in POLICY_EVIDENCE_TERMS):
+            score += 0.7
+        elif any(term.lower() in blob for term in MARKET_HYPE_TERMS):
+            score -= 0.4
     return score
+
+
+def _query_requests_policy_context(query: str) -> bool:
+    return any(
+        term in query
+        for term in ("政策", "管制", "监管", "规则", "措施", "国产替代", "产业链")
+    )
 
 
 def _candidates_to_items(

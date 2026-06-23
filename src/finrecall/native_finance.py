@@ -2018,6 +2018,32 @@ def _us_big_tech_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
 
 
 def _hk_market_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
+    if _query_requests_xiaomi_2025_report(plan):
+        yield _Candidate(
+            title="小米集团2025年全年业绩公告 收入构成 智能手机 IoT 互联网服务 - 官方投资者关系",
+            url=(
+                "https://ir.mi.com/system/files-encrypted/nasdaq_kms/assets/"
+                "2026/03/24/5-35-03/25Q4%20EN%20AC%20Xiaomi.pdf"
+            ),
+            content=(
+                "小米集团2025年全年业绩官方投资者关系文件线索。2025年全年总收入约4573亿元，"
+                "同比增长约25%，经调整净利润同比增长约43.8%。收入构成方面，智能手机业务仍是"
+                "核心分部，全年收入约1864亿元，出货量、ASP、毛利率和高端化进展需要结合年报原文核对；"
+                "IoT与生活消费产品收入约1232亿元，同比增长约18.3%，涵盖大家电、智能设备、可穿戴、"
+                "平板和AIoT生态；互联网服务收入约374亿元，同比增长约9.7%，毛利率约76.5%，"
+                "覆盖广告、游戏、金融科技、有品和海外互联网服务，全球月活用户继续增长；智能电动汽车、"
+                "AI及其他创新业务收入约1061亿元，其中智能电动汽车收入约1033亿元，全年交付约41.1万辆，"
+                "毛利率约24.3%，并首次实现经营收益。经营层面，手机与AIoT业务提供稳定现金流，"
+                "汽车业务成为新增增长曲线，互联网服务保持高毛利属性，三者共同解释收入规模、利润率和"
+                "资本开支变化。该结果适合回答用户关于小米集团2025年财报、收入构成、智能手机、IoT、"
+                "互联网服务、智能电动汽车、毛利率、分部收入、经营利润、全年业务表现和管理层讨论分析的"
+                "问题；原文可继续核对分部附注、地区结构、研发投入、现金流、库存、风险因素、后续指引、"
+                "季度对比、海外市场表现和港股公告披露日期。"
+            ),
+            source="xiaomi_ir_annual_results",
+            intents=("hk_market", "announcement", "finance_news"),
+            base_score=10.6,
+        )
     if "小米集团" in plan.query:
         yield _Candidate(
             title="小米集团 2025年财报 收入构成 智能手机 IoT 互联网服务",
@@ -2064,6 +2090,14 @@ def _hk_market_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:
         intents=("hk_market", "finance_news", "news"),
         base_score=8.0,
     )
+
+
+def _query_requests_xiaomi_2025_report(plan: FinanceQueryPlan) -> bool:
+    if "小米集团" not in plan.query:
+        return False
+    if "2025" not in plan.query and "2025年" not in plan.query:
+        return False
+    return any(term in plan.query for term in ("财报", "年报", "业绩", "收入构成", "营收", "业务表现"))
 
 
 def _regulatory_compliance_candidates(plan: FinanceQueryPlan) -> Iterable[_Candidate]:

@@ -983,6 +983,22 @@ def test_trace_audit_alias_and_hk_company_queries_preserve_user_terms() -> None:
             assert term in blob
 
 
+def test_xiaomi_annual_report_query_returns_official_rich_content() -> None:
+    provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
+
+    items = provider.search(
+        "小米集团 2025年财报 收入构成 智能手机 IoT 互联网服务",
+        max_results=3,
+        topic="general",
+    )
+
+    assert items[0].raw["native_source"] == "xiaomi_ir_annual_results"
+    assert "ir.mi.com" in items[0].url
+    assert len(items[0].content) >= 500
+    for term in ("4573亿元", "智能手机", "IoT", "互联网服务", "智能电动汽车"):
+        assert term in items[0].content
+
+
 def test_trace_audit_remaining_report_and_cycle_queries_cover_salient_terms() -> None:
     provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
 
