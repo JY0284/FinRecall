@@ -34,6 +34,22 @@ FINRECALL_CACHE_TTL_SECONDS=900
 FINRECALL_FETCH_TIMEOUT_SECONDS=10
 ```
 
+Experimental keyless search settings:
+
+```env
+FINRECALL_PROVIDER=hybrid_keyless
+FINRECALL_KEYLESS_TIMEOUT_SECONDS=5
+FINRECALL_KEYLESS_SLEEP_SECONDS=0.2
+```
+
+`hybrid_keyless` keeps native finance results for structured market-data
+queries and adds conservative keyless recall for content-heavy queries such as
+news, earnings, announcements, and policy analysis. The first default source is
+Bing News RSS, followed by browser-readable HTML sources when robots rules allow
+them. It does not use API keys, CAPTCHA bypass, proxy pools, or anti-bot
+evasion. Treat it as an experiment until source terms have been reviewed and
+trace comparison metrics are consistently better than native-only search.
+
 ## Management
 
 Use these commands during operations:

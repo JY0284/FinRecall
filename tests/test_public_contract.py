@@ -7,6 +7,7 @@ import pytest
 from finrecall import FinRecallClient
 from finrecall.api import default_db_path, default_provider
 from finrecall.cli import _build_parser
+from finrecall.hybrid import HybridSearchProvider
 from finrecall.native_finance import NativeFinanceProvider
 
 
@@ -36,6 +37,12 @@ def test_default_provider_rejects_external_provider_names(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="Unsupported FINRECALL_PROVIDER"):
         default_provider()
+
+
+def test_default_provider_can_enable_hybrid_keyless_provider(monkeypatch) -> None:
+    monkeypatch.setenv("FINRECALL_PROVIDER", "hybrid_keyless")
+
+    assert isinstance(default_provider(), HybridSearchProvider)
 
 
 def test_public_docs_do_not_reference_private_workspace() -> None:

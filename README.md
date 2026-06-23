@@ -5,10 +5,11 @@ discovers live finance information, extracts article metadata, stores documents
 locally in SQLite/FTS, and recalls archived material without requiring a hosted
 search service.
 
-The default and only bundled provider is `native`, a built-in finance source
-router focused on authoritative Chinese market sources. Downstream applications
-can pass a custom provider to `FinRecallClient` when they need experiments or
-fallback behavior outside the core package.
+The default bundled provider is `native`, a built-in finance source router
+focused on authoritative Chinese market sources. Experimental recall providers
+such as `hybrid_keyless` can be enabled explicitly, and downstream applications
+can pass a custom provider to `FinRecallClient` when they need behavior outside
+the core package.
 
 ## Features
 
@@ -65,6 +66,20 @@ FINRECALL_PROVIDER=native
 FINRECALL_DB=./data/finrecall.sqlite
 FINRECALL_CACHE_TTL_SECONDS=900
 FINRECALL_FETCH_TIMEOUT_SECONDS=10
+```
+
+For search-quality experiments, `FINRECALL_PROVIDER=hybrid_keyless` combines
+the native finance router with conservative keyless recall sources, starting
+with Bing News RSS plus browser-readable HTML sources when robots rules allow
+them. The harvester is designed for cached, rate-limited recall; it does not
+bypass CAPTCHAs, use proxy pools, or attempt anti-bot evasion. Review each
+source's terms before production use, and keep production search on the native
+or downstream default until trace metrics justify promotion.
+
+```env
+FINRECALL_PROVIDER=hybrid_keyless
+FINRECALL_KEYLESS_TIMEOUT_SECONDS=5
+FINRECALL_KEYLESS_SLEEP_SECONDS=0.2
 ```
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for operations, backup, and

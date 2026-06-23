@@ -432,9 +432,13 @@ def default_provider() -> Any:
     provider_name = os.environ.get("FINRECALL_PROVIDER", "native").strip().lower()
     if provider_name in {"native", "native_finance", "finance"}:
         return NativeFinanceProvider()
+    if provider_name in {"hybrid", "hybrid_keyless", "keyless"}:
+        from finrecall.hybrid import HybridSearchProvider
+
+        return HybridSearchProvider()
     raise ValueError(
-        "Unsupported FINRECALL_PROVIDER. FinRecall v1 ships the native finance "
-        "provider only; pass a custom provider to FinRecallClient for experiments."
+        "Unsupported FINRECALL_PROVIDER. Use native or hybrid_keyless, or pass "
+        "a custom provider to FinRecallClient for experiments."
     )
 
 
