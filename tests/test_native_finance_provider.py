@@ -289,6 +289,202 @@ def test_event_disclosure_query_without_announcement_word_searches_exchange_docu
     )
 
 
+def test_event_disclosure_query_falls_back_to_sina_notice_body_when_sse_is_empty() -> None:
+    calls: list[str] = []
+
+    def fake_fetcher(url: str) -> bytes:
+        calls.append(url)
+        parsed = urlparse(url)
+        if parsed.path.endswith("/security/stock/queryCompanyBulletin.do"):
+            return (
+                "jsonpCallback1({"
+                '"pageHelp":{"data":[],"total":0},'
+                '"result":[]'
+                "})"
+            ).encode()
+        if parsed.path.endswith("/corp/go.php/vCB_AllBulletin/stockid/688200.phtml"):
+            return (
+                "<html><body>"
+                "2026-05-27&nbsp;"
+                "<a target='_blank' href='/corp/view/vCB_AllBulletinDetail.php?stockid=688200&id=12355654'>"
+                "华峰测控：股东询价转让计划书</a><br>"
+                "2026-05-27&nbsp;"
+                "<a target='_blank' href='/corp/view/vCB_AllBulletinDetail.php?stockid=688200&id=12355653'>"
+                "华丰科技：6月限售股解禁提示</a><br>"
+                "</body></html>"
+            ).encode("gb18030")
+        if parsed.path.endswith("/corp/view/vCB_AllBulletinDetail.php"):
+            return (
+                "<html><head><title>华峰测控：股东询价转让计划书</title></head>"
+                "<body><article>"
+                "证券代码：688200 证券简称：华峰测控。"
+                "北京华峰测控技术股份有限公司股东询价转让计划书。"
+                "拟参与华峰测控首发前股东询价转让的股东为中国时代远望科技有限公司。"
+                "出让方拟转让股份的总数为1,355,596股，占公司总股本的比例为1.00%。"
+                "本次询价转让不通过集中竞价交易或大宗交易方式进行，不属于通过二级市场减持。"
+                "受让方通过询价转让受让的股份，在受让后6个月内不得转让。"
+                "</article></body></html>"
+            ).encode()
+        raise AssertionError(f"unexpected url: {url}")
+
+    provider = NativeFinanceProvider(fetcher=fake_fetcher, quote_fetch_deadline_seconds=0.5)
+
+    items = provider.search("华峰测控 688200 减持 限售解禁 风险 2026年6月", max_results=3, topic="general")
+
+    assert any("/corp/go.php/vCB_AllBulletin/stockid/688200.phtml" in url for url in calls)
+    assert any("vCB_AllBulletinDetail.php?stockid=688200&id=12355654" in url for url in calls)
+    assert items[0].raw["native_source"] == "sina_notice_body"
+    assert "股东询价转让计划书" in items[0].title
+    assert "1,355,596股" in items[0].content
+    assert "不属于通过二级市场减持" in items[0].content
+    assert "6个月内不得转让" in items[0].content
+
+
+def test_unlock_listing_query_matches_equity_incentive_stock_listing_notice_body() -> None:
+    calls: list[str] = []
+
+    def fake_fetcher(url: str) -> bytes:
+        calls.append(url)
+        parsed = urlparse(url)
+        if parsed.path.endswith("/security/stock/queryCompanyBulletin.do"):
+            return (
+                "jsonpCallback1({"
+                '"pageHelp":{"data":[],"total":0},'
+                '"result":[]'
+                "})"
+            ).encode()
+        if parsed.path.endswith("/corp/go.php/vCB_AllBulletin/stockid/688200.phtml"):
+            return (
+                "<html><body>"
+                "2026-05-22&nbsp;"
+                "<a target='_blank' href='/corp/view/vCB_AllBulletinDetail.php?stockid=688200&id=12310001'>"
+                "华峰测控：关于2021年限制性股票激励计划部分归属结果暨股票上市公告</a><br>"
+                "2026-05-20&nbsp;"
+                "<a target='_blank' href='/corp/view/vCB_AllBulletinDetail.php?stockid=688200&id=12310000'>"
+                "华峰测控：2025年年度权益分派实施公告</a><br>"
+                "</body></html>"
+            ).encode("gb18030")
+        if parsed.path.endswith("/corp/view/vCB_AllBulletinDetail.php"):
+            return (
+                "<html><head><title>"
+                "华峰测控：关于2021年限制性股票激励计划部分归属结果暨股票上市公告"
+                "</title></head><body><article>"
+                "证券代码：688200 证券简称：华峰测控。"
+                "北京华峰测控技术股份有限公司2021年限制性股票激励计划部分归属结果。"
+                "本次归属股票数量为62,300股，本次归属股票上市流通日期为2026年5月26日。"
+                "本次归属股票来源为公司向激励对象定向发行的A股普通股股票。"
+                "</article></body></html>"
+            ).encode()
+        raise AssertionError(f"unexpected url: {url}")
+
+    provider = NativeFinanceProvider(fetcher=fake_fetcher, quote_fetch_deadline_seconds=0.5)
+
+    items = provider.search("华峰测控 688200 解除限售 上市流通 2026年6月", max_results=3, topic="general")
+
+    assert any("vCB_AllBulletinDetail.php?stockid=688200&id=12310001" in url for url in calls)
+    assert items[0].raw["native_source"] == "sina_notice_body"
+    assert "部分归属结果暨股票上市公告" in items[0].title
+    assert "62,300股" in items[0].content
+    assert "上市流通日期为2026年5月26日" in items[0].content
+
+
+def test_restricted_stock_grant_query_routes_to_listing_notice_body() -> None:
+    def fake_fetcher(url: str) -> bytes:
+        parsed = urlparse(url)
+        if parsed.path.endswith("/corp/go.php/vCB_AllBulletin/stockid/688200.phtml"):
+            return (
+                "<html><body>"
+                "2026-05-22&nbsp;"
+                "<a target='_blank' href='/corp/view/vCB_AllBulletinDetail.php?stockid=688200&id=12310001'>"
+                "华峰测控：关于2021年限制性股票激励计划部分归属结果暨股票上市公告</a><br>"
+                "</body></html>"
+            ).encode("gb18030")
+        if parsed.path.endswith("/corp/view/vCB_AllBulletinDetail.php"):
+            return (
+                "<html><head><title>"
+                "华峰测控：关于2021年限制性股票激励计划部分归属结果暨股票上市公告"
+                "</title></head><body><article>"
+                "证券代码：688200 证券简称：华峰测控。"
+                "北京华峰测控技术股份有限公司2021年限制性股票激励计划部分归属结果。"
+                "本次归属股票上市流通总数为26,285股。"
+                "本次归属股票上市流通日期为2026年5月26日。"
+                "</article></body></html>"
+            ).encode()
+        raise AssertionError(f"unexpected url: {url}")
+
+    provider = NativeFinanceProvider(fetcher=fake_fetcher, quote_fetch_deadline_seconds=0.5)
+
+    items = provider.search("华峰测控 688200 限制性股票归属结果 上市流通 2026年6月", max_results=3, topic="general")
+
+    assert items[0].raw["native_source"] == "sina_notice_body"
+    assert "部分归属结果暨股票上市公告" in items[0].title
+    assert "26,285股" in items[0].content
+
+
+def test_unlock_listing_query_rejects_identity_only_non_event_notice_body() -> None:
+    def fake_fetcher(url: str) -> bytes:
+        parsed = urlparse(url)
+        if parsed.path.endswith("/security/stock/queryCompanyBulletin.do"):
+            return (
+                "jsonpCallback1({"
+                '"pageHelp":{"data":[],"total":0},'
+                '"result":[]'
+                "})"
+            ).encode()
+        if parsed.path.endswith("/corp/go.php/vCB_AllBulletin/stockid/688200.phtml"):
+            return (
+                "<html><body>"
+                "2026-06-02&nbsp;"
+                "<a target='_blank' href='/corp/view/vCB_AllBulletinDetail.php?stockid=688200&id=12408060'>"
+                "华峰测控：向不特定对象发行可转换公司债券网上中签率及优先配售结果公告</a><br>"
+                "</body></html>"
+            ).encode("gb18030")
+        if parsed.path.endswith("/corp/view/vCB_AllBulletinDetail.php"):
+            return (
+                "<html><head><title>"
+                "华峰测控：向不特定对象发行可转换公司债券网上中签率及优先配售结果公告"
+                "</title></head><body><article>"
+                "证券代码：688200 证券简称：华峰测控。"
+                "北京华峰测控技术股份有限公司向不特定对象发行可转换公司债券。"
+                "本次网上中签率及优先配售结果公告披露可转债发行安排。"
+                "</article></body></html>"
+            ).encode()
+        raise AssertionError(f"unexpected url: {url}")
+
+    provider = NativeFinanceProvider(fetcher=fake_fetcher, quote_fetch_deadline_seconds=0.5)
+
+    items = provider.search("华峰测控 688200 解除限售 上市流通 2026年6月", max_results=3, topic="general")
+
+    assert items[0].raw["native_source"] != "sina_notice_body"
+    assert "可转换公司债券" not in items[0].title
+
+
+def test_announcement_search_keywords_expand_disclosure_event_synonyms() -> None:
+    plan = plan_finance_query("华峰测控 688200 减持 限售解禁 风险 2026年6月")
+
+    from finrecall.native_finance import _announcement_search_keywords
+
+    keywords = _announcement_search_keywords(plan)
+
+    assert "减持" in keywords
+    assert "询价转让" in keywords
+    assert "解除限售" in keywords
+    assert "上市流通" in keywords
+
+
+def test_announcement_search_keywords_expand_unlock_listing_synonyms() -> None:
+    plan = plan_finance_query("华峰测控 688200 解除限售 上市流通 2026年6月")
+
+    from finrecall.native_finance import _announcement_search_keywords
+
+    keywords = _announcement_search_keywords(plan)
+
+    assert "解除限售" in keywords
+    assert "上市流通" in keywords
+    assert "股票上市公告" in keywords
+    assert "归属结果" in keywords
+
+
 def test_stock_abnormal_movement_query_routes_to_official_disclosure_pages() -> None:
     provider = NativeFinanceProvider(quote_fetch_deadline_seconds=0)
 

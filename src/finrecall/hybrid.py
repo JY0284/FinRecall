@@ -29,6 +29,23 @@ CONTENT_QUERY_TERMS = (
     "为什么",
     "解读",
     "发布",
+    "减持",
+    "限售",
+    "解禁",
+    "限售解禁",
+    "解除限售",
+    "上市流通",
+    "股票上市",
+    "股票上市公告",
+    "限制性股票",
+    "归属结果",
+    "询价转让",
+    "转让计划",
+    "权益变动",
+    "持股5%以上",
+    "风险提示",
+    "异动",
+    "异常波动",
 )
 
 DATA_FIRST_TERMS = (
@@ -41,6 +58,27 @@ DATA_FIRST_TERMS = (
     "涨跌幅",
     "换手率",
     "最新价",
+)
+
+STOCK_DISCLOSURE_EVENT_TERMS = (
+    "减持",
+    "限售",
+    "解禁",
+    "限售解禁",
+    "解除限售",
+    "上市流通",
+    "股票上市",
+    "股票上市公告",
+    "限制性股票",
+    "归属结果",
+    "询价转让",
+    "转让计划",
+    "股东询价转让",
+    "权益变动",
+    "持股5%以上",
+    "风险提示",
+    "异动",
+    "异常波动",
 )
 
 
@@ -78,6 +116,8 @@ class HybridSearchProvider:
             time_window=time_window,
         )
         run_keyless = _should_run_keyless(query)
+        if run_keyless and _query_requests_stock_disclosure_event(query) and _has_native_disclosure_body(native_items):
+            run_keyless = False
         if run_keyless:
             native_items = _filter_content_intent_mismatches(native_items, query)
 
@@ -140,6 +180,14 @@ def _filter_native_fillers(items: list[ProviderSearchItem]) -> list[ProviderSear
     return [item for item in items if not _is_low_value_native_filler(item)]
 
 
+def _has_native_disclosure_body(items: list[ProviderSearchItem]) -> bool:
+    return any(
+        str(item.raw.get("native_source") or "") in {"sina_notice_body"}
+        and len(item.content.strip()) >= 300
+        for item in items
+    )
+
+
 def _filter_content_intent_mismatches(
     items: list[ProviderSearchItem],
     query: str,
@@ -177,6 +225,13 @@ def _filter_relevance_mismatches(
     query: str,
 ) -> list[ProviderSearchItem]:
     filtered = items
+    if _query_requests_stock_disclosure_event(query):
+        filtered = [
+            item for item in filtered if _item_mentions_query_stock_identity(item, query)
+        ]
+        if not filtered:
+            return filtered
+
     if _query_requests_full_year_report(query):
         strict_report_items = [
             item
@@ -292,6 +347,12 @@ def _query_requests_policy_context(query: str) -> bool:
         term in query
         for term in ("政策", "管制", "监管", "规则", "措施", "国产替代", "产业链")
     )
+
+
+def _query_requests_stock_disclosure_event(query: str) -> bool:
+    if not any(term in query for term in STOCK_DISCLOSURE_EVENT_TERMS):
+        return False
+    return bool(_query_stock_identity_terms(query))
 
 
 def _looks_like_single_stock_housekeeping(title: str) -> bool:
@@ -466,6 +527,19 @@ def _item_mentions_query_company(item: ProviderSearchItem, query: str) -> bool:
 def _item_mentions_query_year(item: ProviderSearchItem, query: str) -> bool:
     years = re.findall(r"20\d{2}", query)
     return not years or _item_mentions_any(item, tuple(years))
+
+
+def _item_mentions_query_stock_identity(item: ProviderSearchItem, query: str) -> bool:
+    identity_terms = _query_stock_identity_terms(query)
+    return not identity_terms or _item_mentions_any(item, identity_terms)
+
+
+def _query_stock_identity_terms(query: str) -> tuple[str, ...]:
+    terms: list[str] = []
+    for code in re.findall(r"(?<!\d)\d{6}(?!\d)", query):
+        terms.append(code)
+    terms.extend(_query_company_terms(query))
+    return tuple(dict.fromkeys(term for term in terms if len(term) >= 2))
 
 
 def _query_company_terms(query: str) -> tuple[str, ...]:

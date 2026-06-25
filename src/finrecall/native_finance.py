@@ -4,13 +4,15 @@ import calendar
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime
+from html import unescape
 import json
 import re
 import subprocess
 from typing import Callable, Iterable
-from urllib.parse import urlencode, quote
+from urllib.parse import urlencode, quote, urljoin
 from urllib.request import Request, urlopen
 
+from finrecall.extract import extract_document
 from finrecall.models import ProviderSearchItem
 
 
@@ -177,7 +179,14 @@ DISCLOSURE_EVENT_TERMS = (
     "减持",
     "限售",
     "解禁",
+    "解除限售",
+    "上市流通",
+    "股票上市",
+    "股票上市公告",
+    "限制性股票",
+    "归属结果",
     "权益变动",
+    "持股5%以上",
     "询价转让",
     "转让计划",
     "股东",
@@ -195,6 +204,19 @@ DISCLOSURE_EVENT_TERMS = (
     "监管",
 )
 
+ANNOUNCEMENT_KEYWORD_SYNONYMS = {
+    "减持": ("减持", "询价转让", "转让计划", "股东询价转让", "权益变动", "持股5%以上"),
+    "限售": ("限售", "限售股", "解除限售", "上市流通", "股票上市公告", "限制性股票", "归属结果", "部分归属结果"),
+    "限售解禁": ("限售解禁", "限售", "限售股", "解除限售", "上市流通", "股票上市公告", "限制性股票", "归属结果"),
+    "解禁": ("解禁", "解除限售", "上市流通", "股票上市公告", "限售股", "限制性股票", "归属结果"),
+    "解除限售": ("解除限售", "上市流通", "股票上市公告", "限售股", "限制性股票", "归属结果", "部分归属结果"),
+    "上市流通": ("上市流通", "股票上市公告", "限制性股票", "归属结果", "部分归属结果"),
+    "询价转让": ("询价转让", "转让计划", "股东询价转让", "权益变动", "持股5%以上"),
+    "风险": ("风险", "风险提示", "交易风险", "异常波动"),
+    "异动": ("异动", "异常波动", "交易风险"),
+    "异常波动": ("异常波动", "交易风险", "风险提示"),
+}
+
 GENERAL_SEARCH_SOURCES = {
     "eastmoney_search",
     "stcn_search",
@@ -207,6 +229,7 @@ STOCK_NOTICE_SOURCES = {
     "bse_notice",
     "cninfo_notice",
     "sse_notice_document",
+    "sina_notice_body",
 }
 
 LEGACY_STOCK_NOTICE_SOURCES = {
@@ -985,9 +1008,14 @@ def _official_notice_documents_with_deadline(
 ) -> dict[str, list[_Candidate]]:
     if not pairs or deadline_seconds <= 0 or "announcement" not in plan.intents:
         return {}
+    effective_deadline_seconds = (
+        max(deadline_seconds, 5.0)
+        if _query_requests_disclosure_event_body(plan)
+        else deadline_seconds
+    )
     futures = {
         _QUOTE_FETCH_EXECUTOR.submit(
-            _sse_notice_document_candidates,
+            _official_notice_document_candidates_for_stock,
             code=code,
             name=name,
             plan=plan,
@@ -998,7 +1026,7 @@ def _official_notice_documents_with_deadline(
     }
     if not futures:
         return {}
-    done, _pending = wait(futures, timeout=deadline_seconds)
+    done, _pending = wait(futures, timeout=effective_deadline_seconds)
     grouped: dict[str, list[_Candidate]] = {}
     for future in done:
         try:
@@ -1008,6 +1036,45 @@ def _official_notice_documents_with_deadline(
         if candidates:
             grouped[futures[future]] = candidates
     return grouped
+
+
+def _query_requests_disclosure_event_body(plan: FinanceQueryPlan) -> bool:
+    return any(term in plan.query for term in DISCLOSURE_EVENT_TERMS)
+
+
+def _official_notice_document_candidates_for_stock(
+    *,
+    code: str,
+    name: str,
+    plan: FinanceQueryPlan,
+    fetcher: BytesFetcher,
+) -> list[_Candidate]:
+    if _query_requests_disclosure_event_body(plan):
+        sina_candidates = _sina_notice_body_candidates(
+            code=code,
+            name=name,
+            plan=plan,
+            fetcher=fetcher,
+        )
+        if sina_candidates:
+            return sina_candidates
+
+    candidates = _sse_notice_document_candidates(
+        code=code,
+        name=name,
+        plan=plan,
+        fetcher=fetcher,
+    )
+    if candidates:
+        return candidates
+    if not _query_requests_disclosure_event_body(plan):
+        return _sina_notice_body_candidates(
+            code=code,
+            name=name,
+            plan=plan,
+            fetcher=fetcher,
+        )
+    return []
 
 
 def _sse_notice_document_candidates(
@@ -1048,6 +1115,61 @@ def _sse_notice_document_candidates(
     return _dedupe(candidates)[:5]
 
 
+def _sina_notice_body_candidates(
+    *,
+    code: str,
+    name: str,
+    plan: FinanceQueryPlan,
+    fetcher: BytesFetcher,
+) -> list[_Candidate]:
+    begin_date, end_date = _date_range_for_query(plan)
+    list_url = f"https://vip.stock.finance.sina.com.cn/corp/go.php/vCB_AllBulletin/stockid/{code}.phtml"
+    try:
+        listing = _decode_html(fetcher(list_url))
+    except Exception:  # noqa: BLE001
+        return []
+
+    linked_candidates: list[tuple[float, str, str, str]] = []
+    for date_text, href, title in _parse_sina_notice_links(listing):
+        if date_text < begin_date or date_text > end_date:
+            continue
+        if not _text_mentions_stock_identity(title, code=code, name=name):
+            continue
+        title_score = _announcement_event_relevance_score(title, plan)
+        if title_score <= 0 and _announcement_event_terms(plan):
+            continue
+        linked_candidates.append((title_score, date_text, href, title))
+
+    linked_candidates.sort(key=lambda row: (row[0], row[1]), reverse=True)
+
+    candidates: list[_Candidate] = []
+    for title_score, _date_text, href, title in linked_candidates[:8]:
+        detail_url = urljoin(list_url, href)
+        try:
+            extracted = extract_document(detail_url, fetcher(detail_url))
+        except Exception:  # noqa: BLE001
+            continue
+        blob = f"{extracted.title}\n{extracted.content}"
+        if not _text_mentions_stock_identity(blob, code=code, name=name):
+            continue
+        body_score = _announcement_event_relevance_score(blob, plan)
+        if body_score <= 0 and _announcement_event_terms(plan):
+            continue
+        candidates.append(
+            _Candidate(
+                title=extracted.title if extracted.title else title,
+                url=detail_url,
+                content=extracted.content,
+                source="sina_notice_body",
+                intents=("announcement", "news"),
+                base_score=13.2 + min(max(title_score, body_score), 4.0),
+            )
+        )
+        if len(candidates) >= 3:
+            break
+    return _dedupe(candidates)
+
+
 def _sse_notice_row_to_candidate(row: dict, *, code: str, name: str) -> _Candidate | None:
     title = str(row.get("TITLE") or row.get("title") or "").strip()
     raw_url = str(row.get("URL") or row.get("url") or "").strip()
@@ -1069,6 +1191,53 @@ def _sse_notice_row_to_candidate(row: dict, *, code: str, name: str) -> _Candida
         intents=("announcement", "news"),
         base_score=12.5,
     )
+
+
+def _parse_sina_notice_links(html: str) -> list[tuple[str, str, str]]:
+    links: list[tuple[str, str, str]] = []
+    pattern = re.compile(
+        r"(?P<date>20\d{2}-\d{2}-\d{2})&nbsp;\s*"
+        r"<a[^>]+href=['\"](?P<href>[^'\"]+)['\"][^>]*>(?P<title>.*?)</a>",
+        re.IGNORECASE | re.DOTALL,
+    )
+    for match in pattern.finditer(html):
+        title = _clean_html_text(match.group("title"))
+        href = unescape(match.group("href").strip())
+        if title and href:
+            links.append((match.group("date"), href, title))
+    return links
+
+
+def _announcement_title_matches_event(text: str, plan: FinanceQueryPlan) -> bool:
+    return not _announcement_event_terms(plan) or _announcement_event_relevance_score(text, plan) > 0
+
+
+def _announcement_event_relevance_score(text: str, plan: FinanceQueryPlan) -> float:
+    normalized = text.lower()
+    score = 0.0
+    search_keywords = set(_announcement_search_keywords(plan))
+    for keyword in search_keywords:
+        if keyword.lower() in normalized:
+            score += 2.0
+    for term in _announcement_event_terms(plan):
+        if term not in search_keywords and term.lower() in normalized:
+            score += 1.0
+    return score
+
+
+def _announcement_event_terms(plan: FinanceQueryPlan) -> list[str]:
+    terms: list[str] = []
+    for keyword in _announcement_search_keywords(plan):
+        _append_unique(terms, keyword)
+    for trigger, synonyms in ANNOUNCEMENT_KEYWORD_SYNONYMS.items():
+        if trigger in plan.query:
+            for synonym in synonyms:
+                _append_unique(terms, synonym)
+    return terms
+
+
+def _text_mentions_stock_identity(text: str, *, code: str, name: str) -> bool:
+    return code in text or name in text
 
 
 def _official_notice_candidates(*, code: str, name: str, date_text: str) -> Iterable[_Candidate]:
@@ -1274,7 +1443,18 @@ def _announcement_search_keywords(plan: FinanceQueryPlan) -> list[str]:
         if _looks_like_date_keyword(keyword):
             continue
         keywords.append(keyword)
-    return keywords or [""]
+    return _expand_announcement_keywords(keywords) or [""]
+
+
+def _expand_announcement_keywords(keywords: list[str]) -> list[str]:
+    expanded: list[str] = []
+    for keyword in keywords:
+        _append_unique(expanded, keyword)
+        for trigger, synonyms in ANNOUNCEMENT_KEYWORD_SYNONYMS.items():
+            if trigger in keyword or keyword in trigger:
+                for synonym in synonyms:
+                    _append_unique(expanded, synonym)
+    return expanded
 
 
 def _looks_like_date_keyword(value: str) -> bool:
@@ -1295,6 +1475,26 @@ def _loads_json_or_jsonp(text: str) -> dict:
     except json.JSONDecodeError:
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _decode_html(body: bytes) -> str:
+    for encoding in ("utf-8", "gb18030", "latin-1"):
+        try:
+            return body.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return body.decode("utf-8", errors="replace")
+
+
+def _clean_html_text(text: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", text)
+    return " ".join(unescape(text).split())
+
+
+def _append_unique(values: list[str], value: str) -> None:
+    value = value.strip()
+    if value and value not in values:
+        values.append(value)
 
 
 def _field_text(value: object) -> str:

@@ -52,6 +52,15 @@ class KeylessStub:
         ]
 
 
+class NoopEnricher:
+    def enrich(
+        self,
+        query: str,
+        items: list[ProviderSearchItem],
+    ) -> list[ProviderSearchItem]:
+        return items
+
+
 def test_hybrid_provider_prefers_keyless_content_for_news_and_earnings_queries() -> None:
     provider = HybridSearchProvider(native_provider=NativeStub(), keyless_provider=KeylessStub())
 
@@ -793,3 +802,229 @@ def test_hybrid_provider_does_not_enrich_data_queries() -> None:
 
     assert len(items) == 1
     assert items[0].url == "https://news.futunn.com/hk"
+
+
+def test_hybrid_provider_runs_keyless_for_stock_disclosure_event_queries() -> None:
+    class NoticeNative:
+        source_name = "native_finance"
+
+        def search(
+            self,
+            query: str,
+            *,
+            max_results: int,
+            topic: str,
+            time_window: str | None = None,
+        ) -> list[ProviderSearchItem]:
+            return [
+                ProviderSearchItem(
+                    title="华峰测控(688200) 2026年6月 公司公告 信息披露 - 上海证券交易所",
+                    url="https://www.sse.com.cn/assortment/stock/list/info/announcement/index.shtml?productId=688200",
+                    content="上海证券交易所官方信息披露入口，按证券代码查询华峰测控 688200 公司公告。",
+                    raw={"native_source": "sse_notice", "provider": "native_finance"},
+                )
+            ]
+
+    class DisclosureKeyless:
+        source_name = "keyless_search"
+        called = False
+
+        def search(
+            self,
+            query: str,
+            *,
+            max_results: int,
+            topic: str,
+            time_window: str | None = None,
+        ) -> list[ProviderSearchItem]:
+            self.called = True
+            return [
+                ProviderSearchItem(
+                    title="华峰测控：股东询价转让计划书",
+                    url="https://paper.cnstock.com/html/2026-05/27/content_2222303.htm",
+                    content=(
+                        "证券代码：688200 证券简称：华峰测控。股东询价转让计划书，"
+                        "1,355,596股，不属于通过二级市场减持，受让后6个月内不得转让。"
+                    )
+                    * 4,
+                    raw={"provider": "keyless_search", "source_engine": "bing_news_rss"},
+                )
+            ]
+
+    keyless = DisclosureKeyless()
+    provider = HybridSearchProvider(
+        native_provider=NoticeNative(),
+        keyless_provider=keyless,
+        reranker=None,
+        content_enricher=NoopEnricher(),
+    )
+
+    items = provider.search("华峰测控 688200 减持 限售解禁 风险 2026年6月", max_results=3, topic="general")
+
+    assert keyless.called
+    assert items[0].title == "华峰测控：股东询价转让计划书"
+    assert "不属于通过二级市场减持" in items[0].content
+
+
+def test_hybrid_provider_runs_keyless_for_stock_listing_disclosure_synonyms() -> None:
+    class NoticeNative:
+        source_name = "native_finance"
+
+        def search(
+            self,
+            query: str,
+            *,
+            max_results: int,
+            topic: str,
+            time_window: str | None = None,
+        ) -> list[ProviderSearchItem]:
+            return [
+                ProviderSearchItem(
+                    title="华峰测控(688200) 2026年6月 公司公告 信息披露 - 上海证券交易所",
+                    url="https://www.sse.com.cn/assortment/stock/list/info/announcement/index.shtml?productId=688200",
+                    content="上海证券交易所官方信息披露入口，按证券代码查询华峰测控 688200 公司公告。",
+                    raw={"native_source": "sse_notice", "provider": "native_finance"},
+                )
+            ]
+
+    class ListingKeyless:
+        source_name = "keyless_search"
+        called = False
+
+        def search(
+            self,
+            query: str,
+            *,
+            max_results: int,
+            topic: str,
+            time_window: str | None = None,
+        ) -> list[ProviderSearchItem]:
+            self.called = True
+            return [
+                ProviderSearchItem(
+                    title="华峰测控：限制性股票归属结果暨股票上市",
+                    url="https://finance.example.com/688200-stock-listing.html",
+                    content=(
+                        "证券代码：688200 证券简称：华峰测控。限制性股票归属结果，"
+                        "本次归属股票上市流通日期为2026年5月26日。"
+                    )
+                    * 5,
+                    raw={"provider": "keyless_search", "source_engine": "bing_news_rss"},
+                )
+            ]
+
+    keyless = ListingKeyless()
+    provider = HybridSearchProvider(
+        native_provider=NoticeNative(),
+        keyless_provider=keyless,
+        reranker=None,
+        content_enricher=NoopEnricher(),
+    )
+
+    items = provider.search("华峰测控 688200 限制性股票归属结果 上市流通 2026年6月", max_results=3, topic="general")
+
+    assert keyless.called
+    assert items[0].title == "华峰测控：限制性股票归属结果暨股票上市"
+    assert "上市流通日期" in items[0].content
+
+
+def test_hybrid_provider_filters_wrong_company_keyless_for_stock_event_queries() -> None:
+    class NoticeNative:
+        source_name = "native_finance"
+
+        def search(
+            self,
+            query: str,
+            *,
+            max_results: int,
+            topic: str,
+            time_window: str | None = None,
+        ) -> list[ProviderSearchItem]:
+            return [
+                ProviderSearchItem(
+                    title="华峰测控(688200) 2026年6月 公司公告 信息披露 - 上海证券交易所",
+                    url="https://www.sse.com.cn/assortment/stock/list/info/announcement/index.shtml?productId=688200",
+                    content="上海证券交易所官方信息披露入口，按证券代码查询华峰测控 688200 公司公告。",
+                    raw={"native_source": "sse_notice", "provider": "native_finance"},
+                )
+            ]
+
+    class WrongCompanyKeyless:
+        source_name = "keyless_search"
+
+        def search(
+            self,
+            query: str,
+            *,
+            max_results: int,
+            topic: str,
+            time_window: str | None = None,
+        ) -> list[ProviderSearchItem]:
+            return [
+                ProviderSearchItem(
+                    title="华丰科技6月限售股解禁规模居前",
+                    url="https://finance.sina.com.cn/wrong-company.html",
+                    content="华丰科技6月限售股解禁，电子行业解禁风险受到市场关注。" * 5,
+                    raw={"provider": "keyless_search", "source_engine": "bing_news_rss"},
+                )
+            ]
+
+    provider = HybridSearchProvider(
+        native_provider=NoticeNative(),
+        keyless_provider=WrongCompanyKeyless(),
+        reranker=None,
+        content_enricher=NoopEnricher(),
+    )
+
+    items = provider.search("华峰测控 688200 减持 限售解禁 风险 2026年6月", max_results=3, topic="general")
+
+    assert all("华丰科技" not in item.title for item in items)
+    assert items[0].raw["hybrid_sources"] == ["native_finance"]
+
+
+def test_hybrid_provider_skips_keyless_when_native_disclosure_body_is_available() -> None:
+    class BodyNative:
+        source_name = "native_finance"
+
+        def search(
+            self,
+            query: str,
+            *,
+            max_results: int,
+            topic: str,
+            time_window: str | None = None,
+        ) -> list[ProviderSearchItem]:
+            return [
+                ProviderSearchItem(
+                    title="华峰测控：股东询价转让计划书",
+                    url="https://vip.stock.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?stockid=688200&id=12355654",
+                    content=(
+                        "证券代码：688200 证券简称：华峰测控。股东询价转让计划书，"
+                        "1,355,596股，不属于通过二级市场减持，受让后6个月内不得转让。"
+                    )
+                    * 8,
+                    raw={"native_source": "sina_notice_body", "provider": "native_finance"},
+                )
+            ]
+
+    class SpyKeyless:
+        source_name = "keyless_search"
+        called = False
+
+        def search(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            self.called = True
+            return []
+
+    keyless = SpyKeyless()
+    provider = HybridSearchProvider(
+        native_provider=BodyNative(),
+        keyless_provider=keyless,
+        reranker=None,
+        content_enricher=NoopEnricher(),
+    )
+
+    items = provider.search("华峰测控 688200 减持 限售解禁 风险 2026年6月", max_results=3, topic="general")
+
+    assert not keyless.called
+    assert items[0].raw["hybrid_sources"] == ["native_finance"]
+    assert "不属于通过二级市场减持" in items[0].content

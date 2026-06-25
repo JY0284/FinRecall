@@ -71,6 +71,18 @@ def test_content_enricher_skips_portal_and_market_data_urls() -> None:
             raw={"provider": "native_finance", "native_source": "xiaomi_hk_financials"},
         ),
         ProviderSearchItem(
+            title="华峰测控 公司公告 信息披露 - 上海证券交易所",
+            url="https://www.sse.com.cn/assortment/stock/list/info/announcement/index.shtml?productId=688200",
+            content="上海证券交易所官方信息披露入口。",
+            raw={"provider": "native_finance", "native_source": "sse_notice"},
+        ),
+        ProviderSearchItem(
+            title="华峰测控 公告披露 - 巨潮资讯",
+            url="https://www.cninfo.com.cn/new/disclosure/stock?stockCode=688200",
+            content="巨潮资讯官方披露入口。",
+            raw={"provider": "native_finance", "native_source": "cninfo_notice"},
+        ),
+        ProviderSearchItem(
             title="黄金ETF 518880 最新净值",
             url="https://fund.eastmoney.com/518880.html",
             content="黄金ETF 518880 最新单位净值。",

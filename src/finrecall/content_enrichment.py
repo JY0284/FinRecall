@@ -46,6 +46,9 @@ LOW_VALUE_URL_MARKERS = (
     "data.eastmoney.com/",
     "so.eastmoney.com/",
     "search/titlesearch.xhtml",
+    "sse.com.cn/assortment/stock/list/info/announcement/index.shtml",
+    "cninfo.com.cn/new/disclosure/stock",
+    "emweb.securities.eastmoney.com/pc_hsf10/",
     "/search?",
     "/search/",
 )
