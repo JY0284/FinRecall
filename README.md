@@ -21,12 +21,11 @@ the core package.
 - Tavily trace-teacher import and comparison metrics for search-quality iteration
 - Python API and JSON-first CLI
 
-## In The Quant Stack
+## Embedding FinRecall
 
-`a-share-agent` uses FinRecall inside `tool_web_search` as the default native
-finance search path, with Tavily only as an optional fallback. FinRecall is an
-embedded Python dependency, not a long-running service; configure it through the
-agent process environment when running the full stack.
+FinRecall is designed to run as an embedded Python dependency rather than a
+long-running service. Downstream applications can import its public API, select a
+provider, and configure storage through the application's process environment.
 
 ## Quick Start
 
