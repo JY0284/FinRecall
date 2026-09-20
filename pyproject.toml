@@ -17,6 +17,7 @@ keywords = [
     "a-share",
 ]
 dependencies = [
+    "pypdf>=5.0.0,<7",
     "dateparser>=1.2.0",
     "htmldate>=1.9.0",
     "trafilatura>=1.12.0",
