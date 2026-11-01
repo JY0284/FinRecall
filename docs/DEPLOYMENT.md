@@ -65,9 +65,17 @@ uv run finrecall archive "半导体 出口管制" --limit 10
 and basic local checks. `finrecall stats` is the cheap health check for stored
 events and documents.
 
-SQLite runs with WAL and busy timeout. Back up the database by copying
-`FINRECALL_DB`, plus `-wal` and `-shm` files if present, or by taking a SQLite
-online backup from a maintenance shell.
+SQLite runs with WAL and busy timeout. Use SQLite's online backup API for a
+consistent backup while writers are running. A filesystem copy requires all
+writers to be stopped and the database and any remaining WAL files to be
+preserved together; copying live files independently is not a consistent snapshot.
+
+The optional `finrecall.disclosures.DisclosureArchive` writes immutable
+catalogue and document observations under its caller-selected archive root.
+Back up that root separately when the consuming application uses it; it is
+outside `FINRECALL_DB`. Capture budgets and incomplete coverage remain part of
+the observation, so a successful capture does not establish complete disclosure
+history. See [the disclosure implementation](../src/finrecall/disclosures.py).
 
 ## Verification
 

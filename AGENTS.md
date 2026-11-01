@@ -12,7 +12,8 @@ search, extraction, storage, and archive recall.
 
 ## Runtime Role
 
-- Default provider: `native_finance`.
+- Default configuration: `FINRECALL_PROVIDER=native`; the provider reports
+  `native_finance` as its source identity.
 - Storage is local SQLite/FTS. Use `FINRECALL_DB` to pin the database path.
 - Public environment variables use the `FINRECALL_` prefix.
 
@@ -30,6 +31,9 @@ uv run finrecall stats --db ./data/finrecall.sqlite
 
 - Keep the public API stable:
   `search_web`, `search_archive`, and `fetch_and_store`.
+- Keep the bounded disclosure archive in `finrecall.disclosures` separate from
+  live search and SQLite recall; preserve immutable catalogue/body observations
+  and explicit coverage limits.
 - Keep CLI JSON output machine-readable.
 - Add tests for behavior changes before implementation.
 - Do not commit `.venv`, SQLite databases, cache directories, or benchmark

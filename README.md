@@ -18,6 +18,7 @@ the core package.
 - SQLite WAL storage with FTS5 archive search
 - Date provenance for observed, fetched, published, and updated times
 - Topic and ticker mention extraction for finance recall
+- Bounded CNINFO disclosure catalogues and immutable document observations
 - Tavily trace-teacher import and comparison metrics for search-quality iteration
 - Python API and JSON-first CLI
 
@@ -90,8 +91,8 @@ FINRECALL_KEYLESS_SLEEP_SECONDS=0.2
 
 Hybrid content queries also run a bounded final-result enrichment pass by
 default. It only fetches selected short article-like results, skips quote/fund
-pages and search portals, and is meant to make the returned `content` field
-closer to Tavily-style source text instead of a thin snippet.
+pages and search portals, and fills the returned `content` field with extracted
+source text within the configured result and time budgets.
 
 ```env
 FINRECALL_CONTENT_ENRICHMENT=1
